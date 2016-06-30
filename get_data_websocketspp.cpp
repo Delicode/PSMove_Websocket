@@ -38,14 +38,19 @@
 #include <websocketpp/common/thread.hpp>
 #include <websocketpp/common/memory.hpp>
 
+///Boost Header files///
+#include <boost/thread/thread.hpp>
+
 ///JSON Header files///
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 using namespace rapidjson;
+
 ///Websocket++ typedef///
 typedef websocketpp::client<websocketpp::config::asio_client> client;
 
 ///Websocket++ functions///
+bool disconnected = true;
 
 class connection_metadata {
 	
@@ -224,12 +229,17 @@ public:
 		
 		if (metadata_it == m_connection_list.end()) {
 			std::cout << "> No connection found with id " << id << std::endl;
+			boost::this_thread::sleep(boost::posix_time::seconds(5));
+			disconnected = true;
 			return;
 		}
 
 		m_endpoint.send(metadata_it->second->get_hdl(), message, websocketpp::frame::opcode::text, ec);
 		if (ec) {
 			std::cout << "> Error sending message: " << ec.message() << std::endl;
+			boost::this_thread::sleep(boost::posix_time::seconds(5));
+			id = -1;
+			disconnected = true;
 			return;
 		}
 
@@ -272,22 +282,19 @@ private:
 };
 
 
-
-///PSMove variables///
-
-int Acc_Data[3];	//Array for Accelerometer data
-int Gyro_Data[3];	//Array for the gyroscope data
-int Mag_Data[3];	//Array for the Magnetometer data
-int Button_Data;	//Variable for the button value
-
-
 int main(int argc, char* argv[]) {
+	
 	//Websocket++//
-	
-	
+	std::string ip_address;
+	int id = -1;
 	websocket_endpoint endpoint;
+	while(id < 0) {
+		std::cout << "Enter IP address and port, example: ws://192.168.1.1:7651 \n";
+		std::getline(std::cin, ip_address);
+		id = endpoint.connect(ip_address); //Insert uri here!
+	}
+	disconnected = false;
 	
-	int id = endpoint.connect("ws://192.168.2.10:55555"); //Insert uri here!
 	//PSMOVEAPI//
    
    int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
@@ -333,7 +340,11 @@ int main(int argc, char* argv[]) {
     }
 	
    while ((cvWaitKey(1) & 0xFF) != 27) {	//Press q to exit program
-
+   
+	int Acc_Data[3];	//Array for Accelerometer data
+	int Gyro_Data[3];	//Array for the gyroscope data
+	int Mag_Data[3];	//Array for the Magnetometer data
+	int Button_Data = 0;	//Variable for the button value
    
 	for (j=0; j<c; j++) {
 		std::string message;
@@ -345,16 +356,16 @@ int main(int argc, char* argv[]) {
 		psmove_poll(controllers[j]); //Poll the controller
 
 		psmove_get_accelerometer(controllers[j], &Acc_Data[0], &Acc_Data[1], &Acc_Data[2]);	//Get accelerometer data
-		printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
+		//printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
 		
 		psmove_get_gyroscope(controllers[j], &Gyro_Data[0], &Gyro_Data[1], &Gyro_Data[2]);	//Get gyro data
-		printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
+		//printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
 
 		psmove_get_magnetometer(controllers[j], &Mag_Data[0], &Mag_Data[1], &Mag_Data[2]);	//Get magnetometer data
-		printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
+		//printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
 
 		Button_Data = psmove_get_buttons(controllers[j]);	//Get button data
-		printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
+		//printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
         
 		}
 		std::string Cntrl_ID = psmove_get_serial(controllers[j]);
@@ -409,7 +420,17 @@ int main(int argc, char* argv[]) {
 		Mag_x + ": " + Mag_y + ": " + Mag_z + ": " + button_str;
 		*/
 		
-		
+		if (disconnected == true) {
+			std::cout << "Server has been disconnected, trying to reconnect";
+			id = endpoint.connect(ip_address); //Insert uri here!
+			if (id < 0 || NULL) {
+				std::cout << "Failed to reconnect, trying again";
+				boost::this_thread::sleep(boost::posix_time::seconds(5));
+			}
+			else { 
+			std::cout << "Reconnected!";
+			disconnected = false; }
+		}
 		endpoint.send(id, s.GetString());
 		
 	}
