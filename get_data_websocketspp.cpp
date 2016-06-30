@@ -229,7 +229,6 @@ public:
 		
 		if (metadata_it == m_connection_list.end()) {
 			std::cout << "> No connection found with id " << id << std::endl;
-			boost::this_thread::sleep(boost::posix_time::seconds(5));
 			disconnected = true;
 			return;
 		}
@@ -237,7 +236,6 @@ public:
 		m_endpoint.send(metadata_it->second->get_hdl(), message, websocketpp::frame::opcode::text, ec);
 		if (ec) {
 			std::cout << "> Error sending message: " << ec.message() << std::endl;
-			boost::this_thread::sleep(boost::posix_time::seconds(5));
 			id = -1;
 			disconnected = true;
 			return;
