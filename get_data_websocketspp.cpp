@@ -306,12 +306,12 @@ int main(int argc, char* argv[]) {
    printf("Nr. of controllers found: %d \n", c);
    
    if (c == 0) {	//If no controller is connected, close program
-	   printf("No controller(s) connected, please connect a controller");
+	   printf("No controller(s) connected, please connect a controller \n");
        return 0;
    }
    
    if (!psmove_init(PSMOVE_CURRENT_VERSION)) { //Checking verison
-        fprintf(stderr, "PS Move API init failed (wrong version?)\n");
+        fprintf(stderr, "PS Move API init failed (wrong version?) \n");
         return 0;
    }
 
@@ -322,7 +322,7 @@ int main(int argc, char* argv[]) {
    for (j=0; j<c; j++) {	//Connecting all the controllers
    
 	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
-	    printf("Controller %d is connected with USB, cannot poll data", j);
+	    printf("Controller %d is connected with USB, cannot poll data \n", j);
 	}
 	
     controllers[j] = psmove_connect_by_id(j);	//Connect to the controller
@@ -420,16 +420,17 @@ int main(int argc, char* argv[]) {
 		Mag_x + ": " + Mag_y + ": " + Mag_z + ": " + button_str;
 		*/
 		
-		if (disconnected == true) {
-			std::cout << "Server has been disconnected, trying to reconnect";
+		while (disconnected == true) {
+			std::cout << "Server has been disconnected, trying to reconnect \n";
 			id = endpoint.connect(ip_address); //Insert uri here!
 			if (id < 0 || NULL) {
-				std::cout << "Failed to reconnect, trying again";
+				std::cout << "Failed to reconnect, trying again \n";
 				boost::this_thread::sleep(boost::posix_time::seconds(5));
 			}
 			else { 
-			std::cout << "Reconnected!";
-			disconnected = false; }
+			std::cout << "Reconnected! \n";
+			disconnected = false; 
+			}
 		}
 		endpoint.send(id, s.GetString());
 		
