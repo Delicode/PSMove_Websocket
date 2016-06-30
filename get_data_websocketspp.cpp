@@ -16,33 +16,34 @@
 
 //Send data using websocket
 
-///PSMoveapi includes///
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-#include <assert.h>
-
-#include <opencv2/core/core_c.h>
-#include <opencv2/highgui/highgui_c.h>
-
-#include "psmove.h"
-///Websocket++ includes///
-#include <websocketpp/config/asio_no_tls_client.hpp>
-#include <websocketpp/client.hpp>
-
-#include <websocketpp/common/thread.hpp>
-#include <websocketpp/common/memory.hpp>
-
+///General Header files///
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <map>
 #include <cstring>
 #include <sstream>
 
+///PSMoveapi Header files///
+#include <opencv2/core/core_c.h>
+#include <opencv2/highgui/highgui_c.h>
+#include "psmove.h"
+
+///Websocket++ Header files///
+#include <websocketpp/config/asio_no_tls_client.hpp>
+#include <websocketpp/client.hpp>
+#include <websocketpp/common/thread.hpp>
+#include <websocketpp/common/memory.hpp>
+
+///JSON Header files///
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
+using namespace rapidjson;
 ///Websocket++ typedef///
 typedef websocketpp::client<websocketpp::config::asio_client> client;
-
 
 ///Websocket++ functions///
 
@@ -293,7 +294,6 @@ int main(int argc, char* argv[]) {
    int g[6] = {0, 255, 0, 255, 255, 0};	
    int b[6] = {0, 0, 255, 0, 255, 255};
    int j, c;
-   int usb_controllers[6] = {0, 0, 0, 0, 0, 0};
 
    c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
    printf("Nr. of controllers found: %d \n", c);
@@ -342,20 +342,55 @@ int main(int argc, char* argv[]) {
 
 	    if (psmove_connection_type(controllers[j]) != Conn_USB) {	//Only Bluetooth controllers can be polled
 			
-		int poll_controller = psmove_poll(controllers[j]); //Poll the controller
+		psmove_poll(controllers[j]); //Poll the controller
 
 		psmove_get_accelerometer(controllers[j], &Acc_Data[0], &Acc_Data[1], &Acc_Data[2]);	//Get accelerometer data
-		printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
+		//printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
 		
 		psmove_get_gyroscope(controllers[j], &Gyro_Data[0], &Gyro_Data[1], &Gyro_Data[2]);	//Get gyro data
-		printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
+		//printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
 
 		psmove_get_magnetometer(controllers[j], &Mag_Data[0], &Mag_Data[1], &Mag_Data[2]);	//Get magnetometer data
-		printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
+		//printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
 
 		Button_Data = psmove_get_buttons(controllers[j]);	//Get button data
 		printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
-        }
+        
+		}
+		std::string Cntrl_ID = psmove_get_serial(controllers[j]);
+		
+		const char * Chr_cntrl_id = Cntrl_ID.c_str();
+		
+		StringBuffer s;
+		Writer<StringBuffer> writer(s);
+		
+		writer.StartObject();
+		writer.Key("ID");
+		writer.String(Chr_cntrl_id);
+		writer.Key("Acc_x");
+		writer.Uint(Acc_Data[0]);
+		writer.Key("Acc_y");
+		writer.Uint(Acc_Data[1]);
+		writer.Key("Acc_z");
+		writer.Uint(Acc_Data[2]);
+		writer.Key("Gyro_x");
+		writer.Uint(Gyro_Data[0]);
+		writer.Key("Gyro_y");
+		writer.Uint(Gyro_Data[1]);
+		writer.Key("Gyro_z");
+		writer.Uint(Gyro_Data[2]);
+		writer.Key("Mag_x");
+		writer.Uint(Mag_Data[0]);
+		writer.Key("Mag_y");
+		writer.Uint(Mag_Data[1]);
+		writer.Key("Mag_z");
+		writer.Uint(Mag_Data[2]);
+		writer.Key("Button");
+		writer.Uint(Button_Data);
+		writer.EndObject();
+		
+		
+		/*
 		std::string msg = "Controller ";
 		std::string nr = std::to_string(j);
 		std::string Acc_x = std::to_string(Acc_Data[0]);
@@ -372,8 +407,10 @@ int main(int argc, char* argv[]) {
 		message = msg + nr + ": " + Acc_x + " " + Acc_y + Acc_z + " " + 
 		Gyro_x + ": " + Gyro_y + ": " + Gyro_z + ": " + 
 		Mag_x + ": " + Mag_y + ": " + Mag_z + ": " + button_str;
+		*/
 		
-		endpoint.send(id, message);
+		
+		endpoint.send(id, s.GetString());
 		
 	}
    }
