@@ -287,7 +287,7 @@ int main(int argc, char* argv[]) {
 	
 	websocket_endpoint endpoint;
 	
-	int id = endpoint.connect("ws://echo.websocket.org:9002"); //Insert uri here!
+	int id = endpoint.connect("ws://192.168.2.10:55555"); //Insert uri here!
 	//PSMOVEAPI//
    
    int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
@@ -345,13 +345,13 @@ int main(int argc, char* argv[]) {
 		psmove_poll(controllers[j]); //Poll the controller
 
 		psmove_get_accelerometer(controllers[j], &Acc_Data[0], &Acc_Data[1], &Acc_Data[2]);	//Get accelerometer data
-		//printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
+		printf("Controller %d: accel: %5d %5d %5d\n", j, Acc_Data[0], Acc_Data[1], Acc_Data[2]);	//Print accelerometer data
 		
 		psmove_get_gyroscope(controllers[j], &Gyro_Data[0], &Gyro_Data[1], &Gyro_Data[2]);	//Get gyro data
-		//printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
+		printf("Controller %d: gyro: %5d %5d %5d\n", j, Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]);	//Print gyro data
 
 		psmove_get_magnetometer(controllers[j], &Mag_Data[0], &Mag_Data[1], &Mag_Data[2]);	//Get magnetometer data
-		//printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
+		printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
 
 		Button_Data = psmove_get_buttons(controllers[j]);	//Get button data
 		printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
@@ -368,23 +368,23 @@ int main(int argc, char* argv[]) {
 		writer.Key("ID");
 		writer.String(Chr_cntrl_id);
 		writer.Key("Acc_x");
-		writer.Uint(Acc_Data[0]);
+		writer.Double(Acc_Data[0]);
 		writer.Key("Acc_y");
-		writer.Uint(Acc_Data[1]);
+		writer.Double(Acc_Data[1]);
 		writer.Key("Acc_z");
-		writer.Uint(Acc_Data[2]);
+		writer.Double(Acc_Data[2]);
 		writer.Key("Gyro_x");
-		writer.Uint(Gyro_Data[0]);
+		writer.Double(Gyro_Data[0]);
 		writer.Key("Gyro_y");
-		writer.Uint(Gyro_Data[1]);
+		writer.Double(Gyro_Data[1]);
 		writer.Key("Gyro_z");
-		writer.Uint(Gyro_Data[2]);
+		writer.Double(Gyro_Data[2]);
 		writer.Key("Mag_x");
-		writer.Uint(Mag_Data[0]);
+		writer.Double(Mag_Data[0]);
 		writer.Key("Mag_y");
-		writer.Uint(Mag_Data[1]);
+		writer.Double(Mag_Data[1]);
 		writer.Key("Mag_z");
-		writer.Uint(Mag_Data[2]);
+		writer.Double(Mag_Data[2]);
 		writer.Key("Button");
 		writer.Uint(Button_Data);
 		writer.EndObject();
@@ -429,4 +429,3 @@ int main(int argc, char* argv[]) {
 	
    return 0;
 }
-
