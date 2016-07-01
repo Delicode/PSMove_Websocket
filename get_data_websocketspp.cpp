@@ -2,19 +2,21 @@
 
 //Connect available controllers or choose nr of controllers to conncet
 
-//Colors for controllers:
+//Default colors for controllers:
 	//Controller 1: (255, 0, 0) RED
 	//Controller 2: (0, 255, 0) GREEN
 	//Controller 3: (0, 0, 255) BLUE
 	//Controller 4: (255, 255, 0) YELLOW
 	//Controller 5:	(0, 255, 255) CYAN (possible mixup with blue?)
 	//Controller 6:	(255, 0, 255) PURPLE
+	
 //(Tracking calibration?) Other program takes care of tracking?
 
+//Initial websocket message to server, information about connecting device
 //Loop
 //Poll data from the controllers
-
-//Send data using websocket
+//Create Json message
+//Send message using websocket
 
 ///General Header files///
 #include <cstdio>
@@ -51,6 +53,16 @@ typedef websocketpp::client<websocketpp::config::asio_client> client;
 
 ///Websocket++ functions///
 bool disconnected = true;
+
+///PSMove, initial colors///
+int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
+int g[6] = {0, 255, 0, 255, 255, 0};	
+int b[6] = {0, 0, 255, 0, 255, 255};
+
+///The PSMove controllers///
+int c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
+PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
+
 
 class connection_metadata {
 	
@@ -89,9 +101,17 @@ public:
       << "), close reason: " << con->get_remote_close_reason();
     m_error_reason = s.str();
 	}
+	
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
             m_messages.push_back("<< " + msg->get_payload());
+			std::cout << msg->get_payload();
+			
+			std::string incoming_msg = msg->get_payload();
+			//String to JSON or other way around
+			//Extract what is needed, which device, (controller), function and variable
+			//Run the function
+			
         } else {
             m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload()));
         }
@@ -279,10 +299,45 @@ private:
     int m_next_id;
 };
 
+void set_led_color (int controller_nr, int red, int green, int blue) {
+	r[controller_nr] = red;
+	g[controller_nr] = green;
+	b[controller_nr] = blue;
+}
+
+void set_led_pwm(PSMove *move, int controller_nr, unsigned long frequency) {
+	if (frequency < 733) {
+		frequency = 733;
+	}
+	if (frequency > 24000000) {
+		frequency = 24000000;
+	}
+	psmove_set_led_pwm_frequency(move , frequency);
+}
+
+void set_rumble (PSMove *move, int controller_nr, int intensity) {
+	if (intensity > 255) {
+		intensity = 255;
+	}
+	if (intensity < 0) {
+		intensity = 0;
+	}
+	psmove_set_rumble(move , intensity);
+}
+	
+int change_port (websocket_endpoint *endpoint, std::string ip) {
+	int id = endpoint->connect(ip);
+	return id;
+}
+
+void disconnect_controller (PSMove *move) {
+	psmove_disconnect(move);
+}
+
 
 int main(int argc, char* argv[]) {
 	
-	//Websocket++//
+	//Websocket++ Setup//
 	std::string ip_address;
 	int id = -1;
 	websocket_endpoint endpoint;
@@ -293,18 +348,15 @@ int main(int argc, char* argv[]) {
 	}
 	disconnected = false;
 	
-	//PSMOVEAPI//
+	//PSMOVEAPI Setup//
    
-   int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
-   int g[6] = {0, 255, 0, 255, 255, 0};	
-   int b[6] = {0, 0, 255, 0, 255, 255};
-   int j, c;
+   
+   int j;
 
-   c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
-   printf("Nr. of controllers found: %d \n", c);
+     printf("> Nr. of controllers found: %d \n", c);
    
    if (c == 0) {	//If no controller is connected, close program
-	   printf("No controller(s) connected, please connect a controller \n");
+	   printf("> No controller(s) connected, please connect a controller \n");
        return 0;
    }
    
@@ -313,14 +365,13 @@ int main(int argc, char* argv[]) {
         return 0;
    }
 
-   PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
-
-   printf("Connecting %d controllers, setting color(s) \n", c);
+   
+   printf("> Connecting %d controllers, setting color(s) \n", c);
    
    for (j=0; j<c; j++) {	//Connecting all the controllers
    
 	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
-	    printf("Controller %d is connected with USB, cannot poll data \n", j);
+	    printf("> Controller %d is connected with USB, cannot poll data \n", j);
 	}
 	
     controllers[j] = psmove_connect_by_id(j);	//Connect to the controller
@@ -332,10 +383,23 @@ int main(int argc, char* argv[]) {
 	}
 	
 	if (controllers == NULL) {	//In case no controller successfully connected
-        printf("Could not connect to default Move controller.\n"
-               "Please connect one via Bluetooth.\n");
+        printf("> Could not connect to default Move controller.\n"
+               "> Please connect one via Bluetooth.\n");
         exit(1);
     }
+	
+	///Initial contact with websocket server (NI MATE)///
+	StringBuffer Sb;
+	Writer<StringBuffer> writer(Sb);
+	
+	writer.StartObject();
+	writer.Key("Device Name");
+	writer.String("PSMOVE");
+	writer.Key("Device ID");
+	writer.String("");
+	writer.EndObject();
+		
+	///Main loop, polls data and sends it to websocket server///
 	
    while ((cvWaitKey(1) & 0xFF) != 27) {	//Press q to exit program
    
@@ -398,7 +462,6 @@ int main(int argc, char* argv[]) {
 		writer.Uint(Button_Data);
 		writer.EndObject();
 		
-		
 		/*
 		std::string msg = "Controller ";
 		std::string nr = std::to_string(j);
@@ -419,14 +482,15 @@ int main(int argc, char* argv[]) {
 		*/
 		
 		while (disconnected == true) {
-			std::cout << "Server has been disconnected, trying to reconnect \n";
+			id = -1;
+			std::cout << "> Server has been disconnected, trying to reconnect \n";
 			id = endpoint.connect(ip_address); //Insert uri here!
 			if (id < 0 || NULL) {
-				std::cout << "Failed to reconnect, trying again \n";
+				std::cout << "> Failed to reconnect, trying again \n";
 				boost::this_thread::sleep(boost::posix_time::seconds(5));
 			}
 			else { 
-			std::cout << "Reconnected! \n";
+			std::cout << "> Reconnected! \n";
 			disconnected = false; 
 			}
 		}
@@ -436,12 +500,14 @@ int main(int argc, char* argv[]) {
    }
 	
 	//PSMOVE Cleanup//
+	
     for (j=0; j<c; j++) {	//Disconnect all the controllers when done
         psmove_disconnect(controllers[j]);	
     }
 	
     free(controllers);	//Free the allocated memory used by the controllers
     //Websocket Cleanup//
+	
 	int close_code = websocketpp::close::status::normal;
     std::string reason = "Quit program";
 
