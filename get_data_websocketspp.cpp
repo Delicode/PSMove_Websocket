@@ -2,19 +2,21 @@
 
 //Connect available controllers or choose nr of controllers to conncet
 
-//Colors for controllers:
+//Default colors for controllers:
 	//Controller 1: (255, 0, 0) RED
 	//Controller 2: (0, 255, 0) GREEN
 	//Controller 3: (0, 0, 255) BLUE
 	//Controller 4: (255, 255, 0) YELLOW
 	//Controller 5:	(0, 255, 255) CYAN (possible mixup with blue?)
 	//Controller 6:	(255, 0, 255) PURPLE
+	
 //(Tracking calibration?) Other program takes care of tracking?
 
+//Initial websocket message to server, information about connecting device
 //Loop
 //Poll data from the controllers
-
-//Send data using websocket
+//Create Json message
+//Send message using websocket
 
 ///General Header files///
 #include <cstdio>
@@ -44,6 +46,7 @@
 ///JSON Header files///
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
+#include "rapidjson/document.h"
 using namespace rapidjson;
 
 ///Websocket++ typedef///
@@ -51,6 +54,23 @@ typedef websocketpp::client<websocketpp::config::asio_client> client;
 
 ///Websocket++ functions///
 bool disconnected = true;
+
+///PSMove, initial colors///
+int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
+int g[6] = {0, 255, 0, 255, 255, 0};	//Can be changed with the set_led_color function
+int b[6] = {0, 0, 255, 0, 255, 255};
+
+///The PSMove controllers///
+int c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
+PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
+
+int retries = 0;
+
+///Declaring functions///
+void set_led_color (int controller_nr, int red, int green, int blue);
+void set_led_pwm(PSMove *move, unsigned long frequency);
+void set_rumble (PSMove *move, int intensity);
+void disconnect_controller (PSMove *move);
 
 class connection_metadata {
 	
@@ -89,11 +109,54 @@ public:
       << "), close reason: " << con->get_remote_close_reason();
     m_error_reason = s.str();
 	}
+	
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
+	
+		
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
+			Document document;
             m_messages.push_back("<< " + msg->get_payload());
+			std::cout << msg->get_payload();
+			
+			std::string incoming_msg = msg->get_payload(); //Convert to string
+			const char * json_msg = incoming_msg.c_str();  //Convert to char so that it can be parsed
+			
+			document.Parse(json_msg);	//Parsing into Json
+			assert(document.IsObject());
+			int Cntrl_nr = 0;			//Initialise a variable for the controller that will be modified
+			
+			for (int j = 0; j<c; j++) {	//Loop through all connected controllers to find the number of the one we want to modify
+				std::string Cntrl_ID = psmove_get_serial(controllers[j]);
+				const char * Chr_cntrl_id = Cntrl_ID.c_str();
+				
+				if(document["Controller ID"] == Chr_cntrl_id) {	//Break when the correct controller is found
+					Cntrl_nr = j;
+					break;
+				}
+			}
+			//Check which function is sent in the Json message
+			//Extract what is needed, which device, (controller), function and variable
+			//Run the function
+			if (document["Function"] == "set_led_color") {
+				int red = document["Red"].GetInt();
+				int green = document["Green"].GetInt();
+				int blue = document["Blue"].GetInt();
+				set_led_color(Cntrl_nr, red, green, blue);
+			}
+			else if (document["Function"] == "set_led_pwm") {
+				unsigned long frequency = document["Frequency"].GetDouble();
+				set_led_pwm(controllers[Cntrl_nr], frequency);
+			}
+			else if (document["Function"] == "set_rumble") {
+				int intensity = document["Intensity"].GetInt();
+				set_rumble(controllers[Cntrl_nr], intensity);
+			}	
+			else if (document["Function"] == "disconnect_controller") {
+				disconnect_controller(controllers[Cntrl_nr]);
+			}
+		
         } else {
-            m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload()));
+            m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload())); //If the message is not a string or similar
         }
     }
 
@@ -110,7 +173,7 @@ public:
     }
 
     void record_sent_message(std::string message) {
-        m_messages.push_back(">> " + message);
+        m_messages.push_back(">> " + message);	//Save all recieved messages, may be useless
     }
 	
 	
@@ -229,18 +292,18 @@ public:
 		
 		if (metadata_it == m_connection_list.end()) {
 			std::cout << "> No connection found with id " << id << std::endl;
-			disconnected = true;
 			return;
 		}
 
 		m_endpoint.send(metadata_it->second->get_hdl(), message, websocketpp::frame::opcode::text, ec);
 		if (ec) {
 			std::cout << "> Error sending message: " << ec.message() << std::endl;
-			id = -1;
-			disconnected = true;
+			std::cout << "> Trying again after 5 seconds \n";
+			boost::this_thread::sleep(boost::posix_time::seconds(5));
+			retries++;
 			return;
 		}
-
+		retries = 0;
 		metadata_it->second->record_sent_message(message);
 	}
 	
@@ -279,32 +342,66 @@ private:
     int m_next_id;
 };
 
+void set_led_color (int controller_nr, int red, int green, int blue) {
+	r[controller_nr] = red;
+	g[controller_nr] = green;
+	b[controller_nr] = blue;
+	psmove_update_leds(controllers[controller_nr]);			//Update/turn on the controller LED
+}
+
+void set_led_pwm(PSMove *move, unsigned long frequency) {
+	if (frequency < 733) {	//Minimum PWM frequency is 733 Hz
+		frequency = 733;
+	}
+	if (frequency > 24000000) {	//Maximum PWM frequency is 24 MHz
+		frequency = 24000000;
+	}
+	psmove_set_led_pwm_frequency(move , frequency);	//Set the led PWM
+}
+
+void set_rumble (PSMove *move, int intensity) {
+	if (intensity > 255) {	//Maximum rumble intensity is 255
+		intensity = 255;
+	}
+	if (intensity < 0) {	//Minimum or off is 0
+		intensity = 0;
+	}
+	psmove_set_rumble(move , intensity);	//Set the controller rumble 
+}
+/*	
+int change_port (websocket_endpoint *endpoint, std::string ip) {
+	int id = endpoint->connect(ip);
+	return id;
+}
+*/
+void disconnect_controller (PSMove *move) {
+	psmove_disconnect(move);
+}
+
 
 int main(int argc, char* argv[]) {
 	
-	//Websocket++//
+	//Websocket++ Setup//
 	std::string ip_address;
 	int id = -1;
 	websocket_endpoint endpoint;
 	while(id < 0) {
 		std::cout << "Enter IP address and port, example: ws://192.168.1.1:7651 \n";
 		std::getline(std::cin, ip_address);
-		id = endpoint.connect(ip_address); //Insert uri here!
+		id = endpoint.connect(ip_address); 
 	}
-	disconnected = false;
 	
-	//PSMOVEAPI//
+	//PSMOVEAPI Setup//
    
-   int r[6] = {255, 0, 0, 255, 0, 255};	//Different values for different controllers
-   int g[6] = {0, 255, 0, 255, 255, 0};	
-   int b[6] = {0, 0, 255, 0, 255, 255};
-   int j, c;
+	//int c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
+	//PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
+   
+   int j;
 
-   c = psmove_count_connected();	//Get the number of connected controllers, both usb and bluetooth
-   printf("Nr. of controllers found: %d \n", c);
+     printf("> Nr. of controllers found: %d \n", c);
    
    if (c == 0) {	//If no controller is connected, close program
-	   printf("No controller(s) connected, please connect a controller \n");
+	   printf("> No controller(s) connected, please connect a controller \n");
        return 0;
    }
    
@@ -313,17 +410,16 @@ int main(int argc, char* argv[]) {
         return 0;
    }
 
-   PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
-
-   printf("Connecting %d controllers, setting color(s) \n", c);
+   
+   printf("> Connecting %d controllers, setting color(s) \n", c);
    
    for (j=0; j<c; j++) {	//Connecting all the controllers
-   
-	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
-	    printf("Controller %d is connected with USB, cannot poll data \n", j);
-	}
 	
     controllers[j] = psmove_connect_by_id(j);	//Connect to the controller
+	
+	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
+	    printf("> Controller %d is connected with USB, cannot poll data \n", j);
+	}
 	assert(controllers[j] != NULL);				//Check that the controller actually connected
 	psmove_set_rate_limiting(controllers[j], PSMove_True);//Rate limit the controller, should be on by default but will enable just in case
 	psmove_set_leds(controllers[j], r[j], g[j], b[j]);//Assign colot to the controller LED
@@ -332,12 +428,25 @@ int main(int argc, char* argv[]) {
 	}
 	
 	if (controllers == NULL) {	//In case no controller successfully connected
-        printf("Could not connect to default Move controller.\n"
-               "Please connect one via Bluetooth.\n");
+        printf("> Could not connect to default Move controller.\n"
+               "> Please connect one via Bluetooth.\n");
         exit(1);
     }
 	
-   while ((cvWaitKey(1) & 0xFF) != 27) {	//Press q to exit program
+	///Initial contact with websocket server (NI MATE)///
+	StringBuffer Sb;
+	Writer<StringBuffer> writer(Sb);
+	
+	writer.StartObject();
+	writer.Key("Device Name");
+	writer.String("PSMOVE");
+	writer.Key("Device ID");
+	writer.String("");
+	writer.EndObject();
+		
+	///Main loop, polls data and sends it to websocket server///
+	
+   while (retries < 8) {	//Close after 7 retries
    
 	int Acc_Data[3];	//Array for Accelerometer data
 	int Gyro_Data[3];	//Array for the gyroscope data
@@ -376,76 +485,53 @@ int main(int argc, char* argv[]) {
 		writer.StartObject();
 		writer.Key("ID");
 		writer.String(Chr_cntrl_id);
-		writer.Key("Acc_x");
-		writer.Double(Acc_Data[0]);
-		writer.Key("Acc_y");
-		writer.Double(Acc_Data[1]);
-		writer.Key("Acc_z");
-		writer.Double(Acc_Data[2]);
-		writer.Key("Gyro_x");
-		writer.Double(Gyro_Data[0]);
-		writer.Key("Gyro_y");
-		writer.Double(Gyro_Data[1]);
-		writer.Key("Gyro_z");
-		writer.Double(Gyro_Data[2]);
-		writer.Key("Mag_x");
-		writer.Double(Mag_Data[0]);
-		writer.Key("Mag_y");
-		writer.Double(Mag_Data[1]);
-		writer.Key("Mag_z");
-		writer.Double(Mag_Data[2]);
+		writer.Key("Accelerometer");
+		writer.StartArray();
+			writer.Double(Acc_Data[0]);
+			writer.Double(Acc_Data[1]);
+			writer.Double(Acc_Data[2]);
+		writer.EndArray();
+		writer.Key("Gyroscope");
+		writer.StartArray();
+			writer.Double(Gyro_Data[0]);
+			writer.Double(Gyro_Data[1]);
+			writer.Double(Gyro_Data[2]);
+		writer.EndArray();
+		writer.Key("Megnetometer");
+		writer.StartArray();
+			writer.Double(Mag_Data[0]);
+			writer.Double(Mag_Data[1]);
+			writer.Double(Mag_Data[2]);
+		writer.EndArray();
 		writer.Key("Button");
 		writer.Uint(Button_Data);
 		writer.EndObject();
 		
-		
-		/*
-		std::string msg = "Controller ";
-		std::string nr = std::to_string(j);
-		std::string Acc_x = std::to_string(Acc_Data[0]);
-		std::string Acc_y = std::to_string(Acc_Data[1]);
-		std::string Acc_z = std::to_string(Acc_Data[2]);
-		std::string Gyro_x = std::to_string(Gyro_Data[0]);
-		std::string Gyro_y = std::to_string(Gyro_Data[1]);
-		std::string Gyro_z = std::to_string(Gyro_Data[2]);
-		std::string Mag_x = std::to_string(Mag_Data[0]);
-		std::string Mag_y = std::to_string(Mag_Data[1]);
-		std::string Mag_z = std::to_string(Mag_Data[2]);
-		std::string button_str = std::to_string(Button_Data);
-		
-		message = msg + nr + ": " + Acc_x + " " + Acc_y + Acc_z + " " + 
-		Gyro_x + ": " + Gyro_y + ": " + Gyro_z + ": " + 
-		Mag_x + ": " + Mag_y + ": " + Mag_z + ": " + button_str;
-		*/
-		
-		while (disconnected == true) {
-			std::cout << "Server has been disconnected, trying to reconnect \n";
-			id = endpoint.connect(ip_address); //Insert uri here!
-			if (id < 0 || NULL) {
-				std::cout << "Failed to reconnect, trying again \n";
-				boost::this_thread::sleep(boost::posix_time::seconds(5));
-			}
-			else { 
-			std::cout << "Reconnected! \n";
-			disconnected = false; 
-			}
+		/*if (retries > 0) {
+			int close_code = websocketpp::close::status::service_restart;
+			std::string reason = "Trying to re-connect";
+			endpoint.close(id, close_code, reason);
+			id = endpoint.connect(ip_address);
 		}
+		*/
 		endpoint.send(id, s.GetString());
-		
 	}
    }
 	
 	//PSMOVE Cleanup//
+	
     for (j=0; j<c; j++) {	//Disconnect all the controllers when done
         psmove_disconnect(controllers[j]);	
     }
 	
     free(controllers);	//Free the allocated memory used by the controllers
     //Websocket Cleanup//
+	
 	int close_code = websocketpp::close::status::normal;
     std::string reason = "Quit program";
 
     endpoint.close(id, close_code, reason);
+	std::cout << "Program has closed";
 	
    return 0;
 }
