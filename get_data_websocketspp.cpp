@@ -28,10 +28,11 @@
 #include <map>
 #include <cstring>
 #include <sstream>
+#include <new>
 
 ///PSMoveapi Header files///
-#include <opencv2/core/core_c.h>
-#include <opencv2/highgui/highgui_c.h>
+//#include <opencv2/core/core_c.h>
+//#include <opencv2/highgui/highgui_c.h>
 #include "psmove.h"
 
 ///Websocket++ Header files///
@@ -111,11 +112,10 @@ public:
 	}
 	
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
-	
-		
+	std::cout << msg->get_payload().c_str();
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
 			Document document;
-            m_messages.push_back("<< " + msg->get_payload());
+            //m_messages.push_back("<< " + msg->get_payload()); //We send too many messages, causes memory leak
 			std::cout << msg->get_payload();
 			
 			std::string incoming_msg = msg->get_payload(); //Convert to string
@@ -156,10 +156,10 @@ public:
 			}
 		
         } else {
-            m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload())); //If the message is not a string or similar
+            //m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload())); //If the message is not a string or similar
         }
     }
-
+	
     websocketpp::connection_hdl get_hdl() const {
         return m_hdl;
     }
@@ -173,7 +173,7 @@ public:
     }
 
     void record_sent_message(std::string message) {
-        m_messages.push_back(">> " + message);	//Save all recieved messages, may be useless
+        //m_messages.push_back(">> " + message);	
     }
 	
 	
@@ -296,6 +296,7 @@ public:
 		}
 
 		m_endpoint.send(metadata_it->second->get_hdl(), message, websocketpp::frame::opcode::text, ec);
+		
 		if (ec) {
 			std::cout << "> Error sending message: " << ec.message() << std::endl;
 			std::cout << "> Trying again after 5 seconds \n";
@@ -304,7 +305,7 @@ public:
 			return;
 		}
 		retries = 0;
-		metadata_it->second->record_sent_message(message);
+		//metadata_it->second->record_sent_message(message); //Save sent messages, if sending many it uses a lot of memory/ causes memory leak
 	}
 	
 	void close(int id, websocketpp::close::status::value code, std::string reason) {
@@ -409,7 +410,7 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "PS Move API init failed (wrong version?) \n");
         return 0;
    }
-
+	std::string Cntrl_ID[c];
    
    printf("> Connecting %d controllers, setting color(s) \n", c);
    
@@ -424,7 +425,7 @@ int main(int argc, char* argv[]) {
 	psmove_set_rate_limiting(controllers[j], PSMove_True);//Rate limit the controller, should be on by default but will enable just in case
 	psmove_set_leds(controllers[j], r[j], g[j], b[j]);//Assign colot to the controller LED
 	psmove_update_leds(controllers[j]);			//Update/turn on the controller LED
-	
+	Cntrl_ID[j] = psmove_get_serial(controllers[j]);
 	}
 	
 	if (controllers == NULL) {	//In case no controller successfully connected
@@ -434,7 +435,7 @@ int main(int argc, char* argv[]) {
     }
 	
 	///Initial contact with websocket server (NI MATE)///
-	StringBuffer Sb;
+	/*StringBuffer Sb;
 	Writer<StringBuffer> writer(Sb);
 	
 	writer.StartObject();
@@ -443,21 +444,28 @@ int main(int argc, char* argv[]) {
 	writer.Key("Device ID");
 	writer.String("");
 	writer.EndObject();
-		
+	*/	
 	///Main loop, polls data and sends it to websocket server///
+	//StringBuffer s;
 	
-   while (retries < 8) {	//Close after 7 retries
+   while (retries < 6) {	//Close after 7 retries
    
-	int Acc_Data[3];	//Array for Accelerometer data
-	int Gyro_Data[3];	//Array for the gyroscope data
-	int Mag_Data[3];	//Array for the Magnetometer data
-	int Button_Data = 0;	//Variable for the button value
-   
+	int *Acc_Data;//[3];	//Array for Accelerometer data
+	int *Gyro_Data;//[3];	//Array for the gyroscope data
+	int *Mag_Data;//[3];	//Array for the Magnetometer data
+	int *Button_Data;	//Variable for the button value
+	
+	Acc_Data = new int[3];
+	Gyro_Data = new int[3];
+	Mag_Data = new int[3];
+	Button_Data = new int[1];
+	
+	
 	for (j=0; j<c; j++) {
 		std::string message;
 		psmove_set_leds(controllers[j], r[j], g[j], b[j]);	//Refresh the LED color
         psmove_update_leds(controllers[j]);					//Refresh the LED state
-
+		
 	    if (psmove_connection_type(controllers[j]) != Conn_USB) {	//Only Bluetooth controllers can be polled
 			
 		psmove_poll(controllers[j]); //Poll the controller
@@ -471,20 +479,17 @@ int main(int argc, char* argv[]) {
 		psmove_get_magnetometer(controllers[j], &Mag_Data[0], &Mag_Data[1], &Mag_Data[2]);	//Get magnetometer data
 		//printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
 
-		Button_Data = psmove_get_buttons(controllers[j]);	//Get button data
+		Button_Data[0] = psmove_get_buttons(controllers[j]);	//Get button data
 		//printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
         
 		}
-		std::string Cntrl_ID = psmove_get_serial(controllers[j]);
-		
-		const char * Chr_cntrl_id = Cntrl_ID.c_str();
 		
 		StringBuffer s;
 		Writer<StringBuffer> writer(s);
 		
 		writer.StartObject();
 		writer.Key("ID");
-		writer.String(Chr_cntrl_id);
+		writer.String(Cntrl_ID[j].c_str());
 		writer.Key("Accelerometer");
 		writer.StartArray();
 			writer.Double(Acc_Data[0]);
@@ -497,27 +502,34 @@ int main(int argc, char* argv[]) {
 			writer.Double(Gyro_Data[1]);
 			writer.Double(Gyro_Data[2]);
 		writer.EndArray();
-		writer.Key("Megnetometer");
+		writer.Key("Magnetometer");
 		writer.StartArray();
 			writer.Double(Mag_Data[0]);
 			writer.Double(Mag_Data[1]);
 			writer.Double(Mag_Data[2]);
 		writer.EndArray();
 		writer.Key("Button");
-		writer.Uint(Button_Data);
+		writer.Uint(Button_Data[0]);
 		writer.EndObject();
-		
-		/*if (retries > 0) {
+		/*
+		if (retries > 0) {
 			int close_code = websocketpp::close::status::service_restart;
 			std::string reason = "Trying to re-connect";
 			endpoint.close(id, close_code, reason);
 			id = endpoint.connect(ip_address);
 		}
 		*/
-		endpoint.send(id, s.GetString());
+		message = s.GetString();
+		endpoint.send(id, message);
+		message.clear();
+		
 	}
+	delete[] Acc_Data;
+	delete[] Gyro_Data;
+	delete[] Mag_Data;
+	delete[] Button_Data;
    }
-	
+
 	//PSMOVE Cleanup//
 	
     for (j=0; j<c; j++) {	//Disconnect all the controllers when done
@@ -531,7 +543,7 @@ int main(int argc, char* argv[]) {
     std::string reason = "Quit program";
 
     endpoint.close(id, close_code, reason);
-	std::cout << "Program has closed";
+	std::cout << "> Program has closed \n";
 	
    return 0;
 }
