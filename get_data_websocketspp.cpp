@@ -31,12 +31,14 @@
 #include <sstream>
 #include <fstream>
 #include <new>
-#include <vector>
 
 ///PSMoveapi Header files///
-//#include <opencv2/core/core_c.h>
-//#include <opencv2/highgui/highgui_c.h>
 #include "psmove.h"
+
+///PSMoveapi tracker Header files///
+#include <opencv2/core/core_c.h>
+#include <opencv2/highgui/highgui_c.h>
+#include "psmove_tracker.h"
 
 ///Websocket++ Header files///
 #include <websocketpp/config/asio_no_tls_client.hpp>
@@ -72,6 +74,7 @@ PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory
 int retries = 0;
 
 ///Declaring functions///
+
 void set_led_color (int controller_nr, int red, int green, int blue);
 void set_led_pwm(PSMove *move, unsigned long frequency);
 void set_rumble (PSMove *move, int intensity);
@@ -419,6 +422,28 @@ int main(int argc, char* argv[]) {
    
    printf("> Connecting %d controllers, setting color(s) \n", c);
    
+   ///Initializing tracker///
+   
+   void *frame;
+   int result;
+
+   fprintf(stderr, "Trying to init PSMoveTracker...");
+   PSMoveTrackerSettings settings;
+   psmove_tracker_settings_set_default(&settings);
+   settings.color_mapping_max_age = 0;
+   settings.exposure_mode = Exposure_LOW;
+   settings.camera_mirror = PSMove_True;
+   PSMoveTracker* tracker = psmove_tracker_new_with_settings(&settings);
+   
+   if (!tracker)
+   {
+       fprintf(stderr, "Could not init PSMoveTracker.\n");
+       return 1;
+   }
+   fprintf(stderr, "OK\n");
+   
+   ///Initialize Controllers & tracker///
+   
    for (j=0; j<c; j++) {	//Connecting all the controllers
 	
     controllers[j] = psmove_connect_by_id(j);	//Connect to the controller
@@ -432,8 +457,12 @@ int main(int argc, char* argv[]) {
 	psmove_update_leds(controllers[j]);			//Update/turn on the controller LED
 	Cntrl_ID[j] = psmove_get_serial(controllers[j]);
 	Cntrl_ID2[j] = psmove_get_serial(controllers[j]);
+	result = psmove_tracker_enable_with_color(tracker, controllers[j], r[j], g[j], b[j]);
+
 	}
-	
+	if (result == Tracker_CALIBRATED) {
+		printf("Tracker calibrated");
+	}
 	if (controllers == NULL) {	//In case no controller successfully connected
         printf("> Could not connect to default Move controller.\n"
                "> Please connect one via Bluetooth.\n");
@@ -441,6 +470,7 @@ int main(int argc, char* argv[]) {
     }
 	
 	///Initial contact with websocket server (NI MATE)///
+	
 	Document Init_document;
 	Init_document.SetObject();
 	system("bash save_IP.sh");
@@ -494,6 +524,15 @@ int main(int argc, char* argv[]) {
 				"flags": "per_user"
 			},
 			{
+				"name": "Tracker",
+				"type": "array",
+				"datatype": "Double",
+				"count": 1,
+				"min": -4000,
+				"max": 4000,
+				"flags": "per_user"
+			},
+			{
 				"name": "Buttons",
 				"type": "array",
 				"datatype": "bool",
@@ -511,8 +550,6 @@ int main(int argc, char* argv[]) {
 		
 	})";
 	std::string init_msg(Json);
-	
-	//
 	
 	int i;
 	for (i = 0; i< c; i++) {
@@ -534,34 +571,46 @@ int main(int argc, char* argv[]) {
 	init_msg.insert(196, cnt);
 	init_msg.insert(87, ip_addr);
 	
-	std::cout << init_msg << std::endl;
+	//std::cout << init_msg << std::endl;
 	
 	Init_document.Parse(init_msg.c_str());
 	
 	StringBuffer sb;
-	PrettyWriter<StringBuffer> writer2(sb);
+	Writer<StringBuffer> writer2(sb);
 	Init_document.Accept(writer2); // writing parsed document to buffer
 	//std::cout << s.GetString() << std::endl;
 	
 	endpoint.send(id, sb.GetString());
-	///Main loop, polls data and sends it to websocket server///
+	
 	
 	boost::this_thread::sleep(boost::posix_time::seconds(2));
 	
 	
 	StringBuffer s;
+	///Main loop, polls data and sends it to websocket server///
+	
+   while (retries < 6 || (cvWaitKey(1) & 0xFF) != 27) {	//Close after 7 retries or by pressing 'q'
+   
+	psmove_tracker_update_image(tracker);
+    psmove_tracker_update(tracker, NULL);
+    psmove_tracker_annotate(tracker);
 
-   while (retries < 6) {	//Close after 7 retries
+    frame = psmove_tracker_get_frame(tracker);
+    if (frame) {
+        cvShowImage("live camera feed", frame);
+    }
 
 	int *Acc_Data;//[3];	//Array for Accelerometer data
-	int *Gyro_Data;//[3];	//Array for the gyroscope data
+	int *Gyro_Data;//[3];	//Array for the Gyroscope data
 	int *Mag_Data;//[3];	//Array for the Magnetometer data
+	float *Cam_Data;//[3];	//Array for the Cam Tracker data
 	unsigned int *Button_Data;	//Variable for the button value
 	char *array;
 	
 	Acc_Data = new int[3];
 	Gyro_Data = new int[3];
 	Mag_Data = new int[3];
+	Cam_Data = new float[3];
 	Button_Data = new unsigned int[1];
 	array = new char[9];
 	
@@ -586,6 +635,9 @@ int main(int argc, char* argv[]) {
 
 		Button_Data[0] = psmove_get_buttons(controllers[j]);	//Get button data
 		//printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
+		
+		psmove_tracker_get_position(tracker, controllers[j], &Cam_Data[0], &Cam_Data[1], &Cam_Data[2]);
+        printf("x: %10.2f, y: %10.2f, r: %10.2f\n", Cam_Data[0], Cam_Data[1], Cam_Data[2]);
         
 		}
 		
@@ -594,6 +646,7 @@ int main(int argc, char* argv[]) {
 		bin_button_str = bin_button.to_string();
 		//std::cout << bin_button_str << std::endl;
 		
+
 		array[0] = bin_button_str[17];
 		array[1] = bin_button_str[16];
 		array[2] = bin_button_str[15];
@@ -603,15 +656,6 @@ int main(int argc, char* argv[]) {
 		array[6] = bin_button_str[5];
 		array[7] = bin_button_str[2];
 		array[8] = bin_button_str[1];
-
-		/*
-		for(i=0; i<9; i++) {
-			if(Button_Data[0] & (1 << i))
-			arr[i] = 1;
-		else
-			arr[i] = 0;
-
-		}*/
 		
 		Writer<StringBuffer> writer(s);
 		
@@ -636,6 +680,12 @@ int main(int argc, char* argv[]) {
 			writer.Double(Mag_Data[1]);
 			writer.Double(Mag_Data[2]);
 		writer.EndArray();
+		writer.Key("Tracker");
+		writer.StartArray();
+			writer.Double(Cam_Data[0]);
+			writer.Double(Cam_Data[1]);
+			writer.Double(Cam_Data[2]);
+		writer.EndArray();
 		writer.Key("Button");
 		writer.StartArray();
 			writer.Int(array[8] - '0');
@@ -651,13 +701,11 @@ int main(int argc, char* argv[]) {
 		writer.EndObject();
 		
 		if (retries > 0) {
-			std::cout << id << std::endl;
-			int close_code = websocketpp::close::status::service_restart;
+			int close_code = websocketpp::close::status::service_restart;	//Reason why we are closing connection
 			std::string reason = "Trying to re-connect";
-			endpoint.close(id, close_code, reason);
-			id = endpoint.connect(ip_address);
-			boost::this_thread::sleep(boost::posix_time::seconds(2));
-			std::cout << id << std::endl;
+			endpoint.close(id, close_code, reason);		//This will fail if server was closed, might be useless
+			id = endpoint.connect(ip_address);			//Try to reconnect to the server, id will be old id + 1
+			boost::this_thread::sleep(boost::posix_time::seconds(2)); //Have to wait a couple of seconds to reconnect
 		}
 		
 		message = s.GetString();
@@ -672,7 +720,6 @@ int main(int argc, char* argv[]) {
 		*/
 		//std::cout << message << std::endl;
 		endpoint.send(id, message);
-		//std::cout << message << std::endl;
 		message.clear();
 		bin_button.reset();
 		bin_button_str.clear();
@@ -682,6 +729,7 @@ int main(int argc, char* argv[]) {
 	delete[] Acc_Data;
 	delete[] Gyro_Data;
 	delete[] Mag_Data;
+	delete[] Cam_Data;
 	delete[] array;
 	delete[] Button_Data;
   }
@@ -692,6 +740,7 @@ int main(int argc, char* argv[]) {
         psmove_disconnect(controllers[j]);	
     }
 	
+    psmove_tracker_free(tracker);
     free(controllers);	//Free the allocated memory used by the controllers
     //Websocket Cleanup//
 	
