@@ -52,11 +52,7 @@
 #include <boost/thread/thread.hpp>
 
 ///JSON Header files///
-#include "rapidjson/writer.h"
-#include "rapidjson/stringbuffer.h"
-#include "rapidjson/document.h"
 #include "json.hpp"
-using namespace rapidjson;
 using json = nlohmann::json;
 
 ///Define///
@@ -72,6 +68,8 @@ typedef websocketpp::client<websocketpp::config::asio_client> client;
 bool disconnected = true;	//If we are disconnected from server
 int retries = 0;			//If connection to server is lost we save the number of retries we do, exit program after x retries
 bool start = false;			//Value that is checked before we start to send data
+
+///Time varibles///
 boost::posix_time::ptime time_start;
 boost::posix_time::ptime time_end;
 boost::posix_time::time_duration diff;
@@ -144,14 +142,17 @@ public:
 	}
 	
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
-	//std::cout << msg->get_payload().c_str() << std::endl;
+		//std::cout << msg->get_payload().c_str() << std::endl;
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
 			
-			std::string incoming_msg = msg->get_payload(); //Convert to string
+			std::string incoming_msg = msg->get_payload(); 	//Convert to string
+			json json_msg = json::parse(incoming_msg);		//Parse to Json
 			
-			json json_msg = json::parse(incoming_msg);
+			int Cntrl_nr = 0;				//Initialise a variable for the controller that will be changed
 			
-			int Cntrl_nr = 0;				//Initialise a variable for the controller that will be modified
+			//Check which function is sent in the Json message
+			//Extract what is needed, which device, (controller), function and variables
+			//Run the function
 			if (start) {
 				if (json_msg.find("controller_id") != json_msg.end()) {
 					auto cntr_id_nr = json_msg["controller_id"].get<std::string>();
@@ -160,61 +161,54 @@ public:
 						std::string Cntrl_ID = psmove_get_serial(controllers[j]);	//We find according to the controllers Bluetooth mac address, which is/are sent to the server in the beginning
 						//const char * Chr_cntrl_id = Cntrl_ID.c_str();
 				
-					if(cntr_id_nr == Cntrl_ID) {				//Break when the correct controller is found
-						Cntrl_nr = j;
-						break;
-					}
+						if(cntr_id_nr == Cntrl_ID) {				//Break when the correct controller is found
+							Cntrl_nr = j;
+							break;
+						}
 					}
 				}
-				
-			}
-			//std::cout << "In here" << std::endl;
-			
-			//auto it_two = json_msg.find("type");
-			//Check which function is sent in the Json message
-			//Extract what is needed, which device, (controller), function and variables
-			//Run the function
-			auto start_cmd = json_msg["type"].get<std::string>();
-			
-			if (start) {
 				if (json_msg.find("function") != json_msg.end()) {
 					auto func_str = json_msg["function"].get<std::string>();
-				if (func_str == "set_led_color") {		//Set the color of the LED:s , does not work if tracking controllers
-					auto red = json_msg["red"].get<int>();
-					auto green = json_msg["green"].get<int>();
-					auto blue = json_msg["blue"].get<int>();
-					set_led_color(Cntrl_nr, red, green, blue);
+					if (func_str == "set_led_color") {		//Set the color of the LED:s , does not work if tracking controllers
+						auto red = json_msg["red"].get<int>();
+						auto green = json_msg["green"].get<int>();
+						auto blue = json_msg["blue"].get<int>();
+						set_led_color(Cntrl_nr, red, green, blue);
+					}
+					else if (func_str == "set_led_pwm") {	//Set the pwm of the LED:s , does not work if tracking controllers
+						auto frequency = json_msg["frequency"].get<unsigned long>();
+						set_led_pwm(controllers[Cntrl_nr], frequency);
+					}
+					else if (func_str == "set_rumble") {	//Set the rumble motor on or change the intensity
+						auto intensity = json_msg["intensity"].get<int>();
+						set_rumble(controllers[Cntrl_nr], intensity);
+					}
+					else if (func_str == "set_rumble_timed") {
+						auto intensity = json_msg["intensity"].get<int>();
+						auto temp_time = json_msg["time"].get<int>();
+						set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
+					}
+					else if (func_str == "set_rumble_pattern") {
+						int intensity = json_msg["intensity"].get<int>();
+						int temp_pattern = json_msg["pattern"].get<int>();
+						set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
+					}
+					else if (func_str == "disconnect_controller") {
+						disconnect_controller(controllers[Cntrl_nr]);
+					}
 				}
-				else if (func_str == "set_led_pwm") {	//Set the pwm of the LED:s , does not work if tracking controllers
-					auto frequency = json_msg["frequency"].get<unsigned long>();
-					set_led_pwm(controllers[Cntrl_nr], frequency);
-				}
-				else if (func_str == "set_rumble") {	//Set the rumble motor on or change the intensity
-					auto intensity = json_msg["intensity"].get<int>();
-					set_rumble(controllers[Cntrl_nr], intensity);
-				}
-				else if (func_str == "set_rumble_timed") {
-					auto intensity = json_msg["intensity"].get<int>();
-					auto temp_time = json_msg["time"].get<int>();
-					set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
-				}
-				else if (func_str == "set_rumble_pattern") {
-					int intensity = json_msg["intensity"].get<int>();
-					int temp_pattern = json_msg["pattern"].get<int>();
-					set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
-				}
-				else if (func_str == "disconnect_controller") {
-					disconnect_controller(controllers[Cntrl_nr]);
-				}}
 				
 			}
-			//std::cout << "In here 2" << std::endl;
-			if (start_cmd == "start") { //Start message from the server which will be sent to the client when the server is ready to recieve data
-				start = true;
+			if (json_msg.find("type") != json_msg.end()) {
+				auto start_cmd = json_msg["type"].get<std::string>();
+				if (start_cmd == "start") { //Start message from the server which will be sent to the client when the server is ready to recieve data
+					start = true;
+				}
 			}
-		incoming_msg.clear();
-		json_msg.clear();
-        } else {
+			incoming_msg.clear();
+			json_msg.clear();
+        } 
+		else {
             //m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload())); //If the message is not a string or similar, we only send JSON/Strings
         }
     }
@@ -467,13 +461,18 @@ Tracker::Tracker()
       m_tracker(psmove_tracker_new()),
       m_fusion(psmove_fusion_new(m_tracker, 1., 1000.))
 {
-    psmove_tracker_set_mirror(m_tracker, PSMove_True);
-    psmove_tracker_set_exposure(m_tracker, Exposure_HIGH);
-
+		psmove_tracker_set_mirror(m_tracker, PSMove_True);
+		psmove_tracker_set_exposure(m_tracker, Exposure_HIGH);
     for (int i=0; i<m_move_count; i++) {
 		controllers[i] = psmove_connect_by_id(i);	//Connect the controllers
-        while (psmove_tracker_enable(m_tracker, controllers[i]) != Tracker_CALIBRATED); //Track the controllers
+		if (use_tracker == yes) {
+			 while (psmove_tracker_enable(m_tracker, controllers[i]) != Tracker_CALIBRATED); //Track the controllers
+		}
     }
+	if (use_tracker == no) {
+		psmove_fusion_free(m_fusion);
+		psmove_tracker_free(m_tracker);
+	}
 }
 
 Tracker::~Tracker() {
@@ -485,75 +484,74 @@ Tracker::~Tracker() {
 }
 
 void Tracker::update() {
-    for (int i=0; i<m_move_count; i++) {
-
+	if (use_tracker == yes) {
+		for (int i=0; i<m_move_count; i++) {
         Vector3D pos;
         psmove_fusion_get_position(m_fusion, controllers[i], &(pos.x), &(pos.y), &(pos.z));					//Save the position of the controller for drawing on the screen 
 				
 		psmove_fusion_get_position(m_fusion, controllers[i], &Cam_Data2[0], &Cam_Data2[1], &Cam_Data2[2]);	//Save the postion of the controller for sending to server
-    }
-    psmove_tracker_update_image(m_tracker);
-    psmove_tracker_update(m_tracker, NULL);
+		}
+		psmove_tracker_update_image(m_tracker);
+		psmove_tracker_update(m_tracker, NULL);
+	}
 }
 
 void Tracker::init() {
-    glEnable(GL_TEXTURE_2D);
-    glGenTextures(1, &m_texture);
-    glBindTexture(GL_TEXTURE_2D, m_texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	if (use_tracker == yes) {
+		glEnable(GL_TEXTURE_2D);
+		glGenTextures(1, &m_texture);
+		glBindTexture(GL_TEXTURE_2D, m_texture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	}
 }
 
 void Tracker::render() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	if (use_tracker == yes) {
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    PSMoveTrackerRGBImage image = psmove_tracker_get_image(m_tracker);
-
-    glEnable(GL_TEXTURE_2D);
-
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.width, image.height,
+		PSMoveTrackerRGBImage image = psmove_tracker_get_image(m_tracker);
+		glEnable(GL_TEXTURE_2D);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.width, image.height,
             0, GL_RGB, GL_UNSIGNED_BYTE, image.data);
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
+		/* Draw the camera image, filling the screen */
+		glColor3f(1., 1., 1.);
+		glBegin(GL_QUADS);
+		glTexCoord2f(0., 1.);
+		glVertex2f(-1., -1.);
+		glTexCoord2f(1., 1.);
+		glVertex2f(1., -1.);
+		glTexCoord2f(1., 0.);
+		glVertex2f(1., 1.);
+		glTexCoord2f(0., 0.);
+		glVertex2f(-1., 1.);
+		glEnd();
+		glDisable(GL_TEXTURE_2D);
 
-    /* Draw the camera image, filling the screen */
-    glColor3f(1., 1., 1.);
-    glBegin(GL_QUADS);
-    glTexCoord2f(0., 1.);
-    glVertex2f(-1., -1.);
-    glTexCoord2f(1., 1.);
-    glVertex2f(1., -1.);
-    glTexCoord2f(1., 0.);
-    glVertex2f(1., 1.);
-    glTexCoord2f(0., 0.);
-    glVertex2f(-1., 1.);
-    glEnd();
+		/* Clear the depth buffer to allow overdraw */
+		glClear(GL_DEPTH_BUFFER_BIT);
+		glMatrixMode(GL_PROJECTION);
+		glLoadMatrixf(psmove_fusion_get_projection_matrix(m_fusion));
 
-    glDisable(GL_TEXTURE_2D);
+		for (int i=0; i<m_move_count; i++) {
+			glDisable(GL_LIGHTING);
+			glMatrixMode(GL_MODELVIEW);
+			glLoadMatrixf(psmove_fusion_get_modelview_matrix(m_fusion, controllers[i]));
+			glColor3f(1., 0., 0.);
+			drawWireCube(1.);
+		}
 
-    /* Clear the depth buffer to allow overdraw */
-    glClear(GL_DEPTH_BUFFER_BIT);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(psmove_fusion_get_projection_matrix(m_fusion));
-
-    for (int i=0; i<m_move_count; i++) {
-        glDisable(GL_LIGHTING);
-        glMatrixMode(GL_MODELVIEW);
-        glLoadMatrixf(psmove_fusion_get_modelview_matrix(m_fusion, controllers[i]));
-
-        glColor3f(1., 0., 0.);
-        drawWireCube(1.);
-    }
-
-    glEnable(GL_LIGHTING);
-    glColorMaterial ( GL_FRONT_AND_BACK, GL_EMISSION ) ;
-    glEnable ( GL_COLOR_MATERIAL ) ;
-    glDisable(GL_LIGHTING);
+		glEnable(GL_LIGHTING);
+		glColorMaterial ( GL_FRONT_AND_BACK, GL_EMISSION ) ;
+		glEnable ( GL_COLOR_MATERIAL ) ;
+		glDisable(GL_LIGHTING);
+	}
 }
 
 class Renderer {
@@ -572,26 +570,25 @@ class Renderer {
 Renderer::Renderer(Tracker &tracker)
     : m_window(NULL),
       m_tracker(tracker) {
-		  
-	SDL_Init(SDL_INIT_VIDEO);
-	if (SDL_Init(SDL_INIT_VIDEO) < 0)
-	{
-		sdlDie("Unable to initialize SDL");
-	}
+	
+	if (use_tracker == yes) {
+		SDL_Init(SDL_INIT_VIDEO);
+		if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+			sdlDie("Unable to initialize SDL");
+		}
 
-	m_window = SDL_CreateWindow("OpenGL Test1",
+		m_window = SDL_CreateWindow("OpenGL Test1",
 		SDL_WINDOWPOS_CENTERED,
 		SDL_WINDOWPOS_CENTERED,
 		640, 480,
 		SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-	if (m_window == NULL)
-	{
-		sdlDie("Unable to initialize SDL");
+		if (m_window == NULL) {
+			sdlDie("Unable to initialize SDL");
+		}
+		checkSDLError(__LINE__);
+		m_glContext = SDL_GL_CreateContext(m_window);
+		checkSDLError(__LINE__);
 	}
-	checkSDLError(__LINE__);
-
-	m_glContext = SDL_GL_CreateContext(m_window);
-	checkSDLError(__LINE__);
 }
 
 Renderer::~Renderer() {
@@ -628,7 +625,7 @@ Main::Main(Tracker &tracker, Renderer &renderer)
 int Main::exec() {
 	int j;
 
-	//Websocket++ Setup//
+	///Websocket++ Setup///
 	std::string ip_address;
 	int id = -1;
 	websocket_endpoint endpoint;
@@ -640,24 +637,24 @@ int Main::exec() {
 	}
 	boost::this_thread::sleep(boost::posix_time::seconds(2));	//Wait for connection
 
-	//PSMOVEAPI Setup//
+	///PSMOVEAPI Setup///
 	
 	if (use_tracker == yes) {									//IF we want to track the controllers
 		m_tracker.init();										//Initialize tracker
 		m_renderer.init();										//Initialize frame renderer
 	}
 	
-	if (!psmove_init(PSMOVE_CURRENT_VERSION)) { 					//Checking verison
+	if (!psmove_init(PSMOVE_CURRENT_VERSION)) { 				//Checking verison
 	   fprintf(stderr, "PS Move API init failed (wrong version?) \n");
        return 0;
 	}
-	std::string Cntrl_ID[c];										//Two strings to save the MAC adrsses in
+	std::string Cntrl_ID[c];									//Two strings to save the MAC adrsses in
 	std::string Cntrl_ID2[c];									//This one will be modified
    
 	///Initialize Controllers///
    
 	for (j=0; j<c; j++) {										//Connecting all the controllers
-		assert(controllers[j] != NULL);								//Check that the controller actually connected
+		assert(controllers[j] != NULL);							//Check that the controller actually connected
 	
 	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
 	    printf("> Controller %d is connected with USB, cannot poll data\n", j);
@@ -672,7 +669,7 @@ int Main::exec() {
 	psmove_update_leds(controllers[j]);							//Update/turn on the controller LED
 	}
 	
-	if (controllers == NULL) {	//In case no controller successfully connected
+	if (controllers == NULL) {									//In case no controller successfully connected
         printf("> Could not connect to default Move controller.\n"
                "> Please connect one via Bluetooth.\n");
         exit(0);
@@ -680,39 +677,17 @@ int Main::exec() {
 	
 	///Initial contact with websocket server (NI MATE)///
 	
-	system("bash save_IP.sh");								//Run a bash file to get the current devices IP address, might be changed for something else
+	system("bash save_IP.sh");									//Run a bash file to get the current devices IP address, might be changed for something else
 	
 	std::string ip_addr;
 	std::ifstream F_out;
-	F_out.open("IPaddress.txt");							//Open the file that contains the IP address
-	std::getline(F_out, ip_addr);							//Get the IP address
+	F_out.open("IPaddress.txt");								//Open the file that contains the IP address
+	std::getline(F_out, ip_addr);								//Get the IP address
 	F_out.close();
 	
-	ip_addr.erase(ip_addr.end()-1, ip_addr.end());			//Remove the newLine/last character from the IP address
+	ip_addr.erase(ip_addr.end()-1, ip_addr.end());				//Remove the newLine/last character from the IP address
 	
 	///Initial JSON message template that will be sent to the Server///
-	/*
-	j_complete["type"] = "device";
-	j_complete["value"]["device_id"] = "psmove";
-	j_complete["value"]["deivce_type"] = "psmove";
-	j_complete["value"]["name"] = "psmove";
-	j_complete["values"] = json::array({"name", "controller_id"});
-	j_complete["values"]["type"] = "array";
-	j_complete["values"]["data_type"] = "string";
-	j_complete["values"]["count"] = c;
-	j_complete["values"]["id"] = Cntrl_ID;
-	j_complete["values"]["id"] = Cntrl_ID;
-	
-	
-	if (use_tracker == yes) {
-		json_j["value"]["user_1"]["tracker"] = {Cam_Data2[0], Cam_Data2[1], Cam_Data2[2]};
-	}
-	json_j["value"]["user_1"]["buttons"] = {array[8] - '0', array[7] - '0', array[6] - '0', array[5] - '0', array[4] - '0', array[3] - '0'
-	, array[2] - '0', array[1] - '0', array[0] - '0'};
-	json_j["value"]["user_1"]["trigger"] = (trigger[j]);
-	
-	
-	*/
 	char Json[] = R"({
 		"type": "device",
 		"value": {
@@ -794,7 +769,7 @@ int Main::exec() {
 	})";
 	std::string init_msg(Json);					//Create string from the above char message
 	
-	//To add the controllers bluetooth address to the initial message we need to modify the strings//
+	///To add the controllers bluetooth address to the initial message we need to modify the strings///
 	for (int i = 0; i< c; i++) {
 		char controllers[1024];
 		if (i == 0) {
@@ -814,38 +789,38 @@ int Main::exec() {
 	init_msg.insert(216, cnt);					//Insert the number of controllers into the initial message
 	//init_msg.insert(94, ip_addr);				//Insert the IP address of the device into the initial message
 	
+	if (use_tracker == no) {					//Remove tracker from initial message
+		init_msg.erase (785,173);
+	}
+	
 	//std::cout << init_msg << std::endl;		//In case of bug
 	
 	json j_complete = json::parse(init_msg);
-	
 	std::string start_message;
-	
 	start_message = j_complete.dump();
-	
-	endpoint.send(id, start_message);			//Send the initial message
-	
-	
+
+	endpoint.send(id, start_message);			//Send the initial message	
+
 	///Main loop, polls data and sends it to websocket server///
 	
-	while(!start) {
-		boost::this_thread::sleep(boost::posix_time::seconds(1));
-		//std::cout << "waiting for start" << std::endl;		//Wait for server to send start command
+	while(!start) {								//Wait for server to send start command
+		boost::this_thread::sleep(boost::posix_time::seconds(1));	
 	}
 	
-	while (retries < MAX_RETRIES ) {	//Close after 7 retries or by pressing 'q'  || ((cvWaitKey(1) & 0xFF) != 27)
+	while (retries < MAX_RETRIES ) {			//Close after 7 retries or by pressing 'q'  || ((cvWaitKey(1) & 0xFF) != 27)
 
-		if (use_tracker == yes ) {		//If we use the tracker we need to update the tracker and render the screen
+		if (use_tracker == yes ) {				//If we use the tracker we need to update the tracker and render the screen
 			m_tracker.update();
 			m_renderer.render();
 		}
 
-	int *Acc_Data;				//Array for Accelerometer data
-	int *Gyro_Data;				//Array for the Gyroscope data
-	int *Mag_Data;				//Array for the Magnetometer data
-	float *Cam_Data;			//Array for the Cam Tracker data
-	unsigned int *Button_Data;	//Variable for the button value
-	char *array;				//Array of buttons
-	unsigned char *trigger;		//Analog trigger value
+	int *Acc_Data;						//Array for Accelerometer data
+	int *Gyro_Data;						//Array for the Gyroscope data
+	int *Mag_Data;						//Array for the Magnetometer data
+	float *Cam_Data;					//Array for the Cam Tracker data
+	unsigned int *Button_Data;			//Variable for the button value
+	char *array;						//Array of buttons
+	unsigned char *trigger;				//Analog trigger value
 
 	Acc_Data = new int[3];
 	Gyro_Data = new int[3];
@@ -858,11 +833,12 @@ int Main::exec() {
 	time_end = boost::posix_time::microsec_clock::local_time();
 	diff = time_end - time_start;
 	
-	while (diff.total_milliseconds() < WAIT_TIME ) {
+	while (diff.total_milliseconds() < WAIT_TIME ) {			//Limit the data sending rate
 		usleep(1);
 		time_end = boost::posix_time::microsec_clock::local_time();
 		diff = time_end - time_start;
 	}
+
 	for (j=0; j<c; j++) {
 
 		array = new char[9];
@@ -1058,10 +1034,10 @@ int change_port (websocket_endpoint *endpoint, std::string ip) {
 */
 
 int main(int argc, char *argv[]) {
-	std::cout << "> Nr. of controllers found: %d \n", c) << std::endl;
+	std::cout << "> Nr. of controllers found:" << c << std::endl;
 	
    if (c == 0) {	//If no controller is connected, won't be able to do anything so -> close program
-	   std::cout << "> No controller(s) connected, please connect a controller \n") << std::endl;
+	   std::cout << "> No controller(s) connected, please connect a controller" << std::endl;
        return 0;
    }
 	
