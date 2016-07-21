@@ -55,11 +55,14 @@
 #include "rapidjson/writer.h"
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/document.h"
+#include "json.hpp"
 using namespace rapidjson;
+using json = nlohmann::json;
 
 ///Define///
 #define MAX_RETRIES 6		//Nr of time the program will try to reconnect to the websocket server before closing
 #define MAX_CONTROLLERS 6	//Can possibly connect more controllers, depending on bluetooth dongle/module
+#define WAIT_TIME 8
 
 
 ///Websocket++ typedef///
@@ -69,6 +72,9 @@ typedef websocketpp::client<websocketpp::config::asio_client> client;
 bool disconnected = true;	//If we are disconnected from server
 int retries = 0;			//If connection to server is lost we save the number of retries we do, exit program after x retries
 bool start = false;			//Value that is checked before we start to send data
+boost::posix_time::ptime time_start;
+boost::posix_time::ptime time_end;
+boost::posix_time::time_duration diff;
 
 ///Global variables///
 char use_tracker;			//Keep track if we are tracking or not
@@ -138,63 +144,76 @@ public:
 	}
 	
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
-	std::cout << msg->get_payload().c_str();
+	//std::cout << msg->get_payload().c_str() << std::endl;
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
-			Document document;
-            //m_messages.push_back("<< " + msg->get_payload()); //We send too many messages, causes memory leak
-			std::cout << msg->get_payload();
 			
 			std::string incoming_msg = msg->get_payload(); //Convert to string
-			const char * json_msg = incoming_msg.c_str();  //Convert to char so that it can be parsed
 			
-			document.Parse(json_msg);		//Parsing into Json
-			assert(document.IsObject());	//Assert that the document actually is an Object
+			json json_msg = json::parse(incoming_msg);
+			
 			int Cntrl_nr = 0;				//Initialise a variable for the controller that will be modified
+			if (start) {
+				if (json_msg.find("controller_id") != json_msg.end()) {
+					auto cntr_id_nr = json_msg["controller_id"].get<std::string>();
 			
-			for (int j = 0; j<c; j++) {		//Loop through all connected controllers to find the number of the one we want to modify
-				std::string Cntrl_ID = psmove_get_serial(controllers[j]);	//We find according to the controllers Bluetooth mac address, which is/are sent to the server in the beginning
-				const char * Chr_cntrl_id = Cntrl_ID.c_str();
+					for (int j = 0; j<c; j++) {		//Loop through all connected controllers to find the number of the one we want to modify
+						std::string Cntrl_ID = psmove_get_serial(controllers[j]);	//We find according to the controllers Bluetooth mac address, which is/are sent to the server in the beginning
+						//const char * Chr_cntrl_id = Cntrl_ID.c_str();
 				
-				if(document["controller id"] == Chr_cntrl_id) {				//Break when the correct controller is found
-					Cntrl_nr = j;
-					break;
+					if(cntr_id_nr == Cntrl_ID) {				//Break when the correct controller is found
+						Cntrl_nr = j;
+						break;
+					}
+					}
 				}
+				
 			}
+			//std::cout << "In here" << std::endl;
+			
+			//auto it_two = json_msg.find("type");
 			//Check which function is sent in the Json message
 			//Extract what is needed, which device, (controller), function and variables
 			//Run the function
-			if (document.HasMember("start")) { //Start message from the server which will be sent to the client when the server is ready to recieve data
+			auto start_cmd = json_msg["type"].get<std::string>();
+			
+			if (start) {
+				if (json_msg.find("function") != json_msg.end()) {
+					auto func_str = json_msg["function"].get<std::string>();
+				if (func_str == "set_led_color") {		//Set the color of the LED:s , does not work if tracking controllers
+					auto red = json_msg["red"].get<int>();
+					auto green = json_msg["green"].get<int>();
+					auto blue = json_msg["blue"].get<int>();
+					set_led_color(Cntrl_nr, red, green, blue);
+				}
+				else if (func_str == "set_led_pwm") {	//Set the pwm of the LED:s , does not work if tracking controllers
+					auto frequency = json_msg["frequency"].get<unsigned long>();
+					set_led_pwm(controllers[Cntrl_nr], frequency);
+				}
+				else if (func_str == "set_rumble") {	//Set the rumble motor on or change the intensity
+					auto intensity = json_msg["intensity"].get<int>();
+					set_rumble(controllers[Cntrl_nr], intensity);
+				}
+				else if (func_str == "set_rumble_timed") {
+					auto intensity = json_msg["intensity"].get<int>();
+					auto temp_time = json_msg["time"].get<int>();
+					set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
+				}
+				else if (func_str == "set_rumble_pattern") {
+					int intensity = json_msg["intensity"].get<int>();
+					int temp_pattern = json_msg["pattern"].get<int>();
+					set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
+				}
+				else if (func_str == "disconnect_controller") {
+					disconnect_controller(controllers[Cntrl_nr]);
+				}}
+				
+			}
+			//std::cout << "In here 2" << std::endl;
+			if (start_cmd == "start") { //Start message from the server which will be sent to the client when the server is ready to recieve data
 				start = true;
 			}
-			if (document["function"] == "set_led_color") {		//Set the color of the LED:s , does not work if tracking controllers
-				int red = document["Red"].GetInt();
-				int green = document["Green"].GetInt();
-				int blue = document["Blue"].GetInt();
-				set_led_color(Cntrl_nr, red, green, blue);
-			}
-			else if (document["function"] == "set_led_pwm") {	//Set the pwm of the LED:s , does not work if tracking controllers
-				unsigned long frequency = document["Frequency"].GetDouble();
-				set_led_pwm(controllers[Cntrl_nr], frequency);
-			}
-			else if (document["function"] == "set_rumble") {	//Set the rumble motor on or change the intensity
-				int intensity = document["intensity"].GetInt();
-				set_rumble(controllers[Cntrl_nr], intensity);
-			}
-			else if (document["funtion"] == "set_rumble_timed") {
-				int intensity = document["intensity"].GetInt();
-				int temp_time = document["time"].GetInt();
-				set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
-			}
-			else if (document["function"] == "set_rumble_pattern") {
-				int intensity = document["intensity"].GetInt();
-				int temp_pattern = document["pattern"].GetInt();
-				set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
-			}
-			else if (document["function"] == "disconnect_controller") {
-				disconnect_controller(controllers[Cntrl_nr]);
-			}
 		incoming_msg.clear();
-		document.Clear();
+		json_msg.clear();
         } else {
             //m_messages.push_back("<< " + websocketpp::utility::to_hex(msg->get_payload())); //If the message is not a string or similar, we only send JSON/Strings
         }
@@ -627,18 +646,18 @@ int Main::exec() {
 		m_tracker.init();										//Initialize tracker
 		m_renderer.init();										//Initialize frame renderer
 	}
-   
-   if (!psmove_init(PSMOVE_CURRENT_VERSION)) { 					//Checking verison
+	
+	if (!psmove_init(PSMOVE_CURRENT_VERSION)) { 					//Checking verison
 	   fprintf(stderr, "PS Move API init failed (wrong version?) \n");
        return 0;
-   }
-   std::string Cntrl_ID[c];										//Two strings to save the MAC adrsses in
-   std::string Cntrl_ID2[c];									//This one will be modified
+	}
+	std::string Cntrl_ID[c];										//Two strings to save the MAC adrsses in
+	std::string Cntrl_ID2[c];									//This one will be modified
    
-   ///Initialize Controllers///
+	///Initialize Controllers///
    
-   for (j=0; j<c; j++) {										//Connecting all the controllers
-	assert(controllers[j] != NULL);								//Check that the controller actually connected
+	for (j=0; j<c; j++) {										//Connecting all the controllers
+		assert(controllers[j] != NULL);								//Check that the controller actually connected
 	
 	if (psmove_connection_type(controllers[j]) == Conn_USB) {	//If controller is connected with USB it cannot be polled
 	    printf("> Controller %d is connected with USB, cannot poll data\n", j);
@@ -661,8 +680,6 @@ int Main::exec() {
 	
 	///Initial contact with websocket server (NI MATE)///
 	
-	Document Init_document;
-	Init_document.SetObject();
 	system("bash save_IP.sh");								//Run a bash file to get the current devices IP address, might be changed for something else
 	
 	std::string ip_addr;
@@ -677,11 +694,11 @@ int Main::exec() {
 	char Json[] = R"({
 		"type": "device",
 		"value": {
+			"device_id": "psmove",
 			"device_type": "psmove",
 			"name": "psmove",
-			"id": "",
-			"Values": [ {
-				"name": "Controller ID",
+			"values": [ {
+				"name": "controller id",
 				"type": "array",
 				"datatype": "string",
 				"count": ,
@@ -689,35 +706,39 @@ int Main::exec() {
 			},
 			{
 				"name": "accelerometer",
-				"type": "vec3",
-				"datatype": "double",
+				"type": "vec",
+				"datatype": "float",
+				"vec_dimension": 3,
 				"count": 1,
-				"min": -4000,
-				"max": 4000,
+				"min": -32000,
+				"max": 32000,
 				"flags": "per_user"
 			},
 			{
 				"name": "gyroscope",
-				"type": "vec3",
-				"datatype": "double",
+				"type": "vec",
+				"datatype": "float",
+				"vec_dimension": 3,
 				"count": 1,
-				"min": -4000,
-				"max": 4000,
+				"min": -32000,
+				"max": 32000,
 				"flags": "per_user"
 			},
 			{
 				"name": "magnetometer",
-				"type": "vec3",
-				"datatype": "double",
+				"type": "vec",
+				"datatype": "float",
+				"vec_dimension": 3,
 				"count": 1,
-				"min": -4000,
-				"max": 4000,
+				"min": -32000,
+				"max": 32000,
 				"flags": "per_user"
 			},
 			{
 				"name": "tracker",
-				"type": "array",
-				"datatype": "double",
+				"type": "vec",
+				"datatype": "float",
+				"vec_dimension": 3,
 				"count": 1,
 				"min": -15,
 				"max": 15,
@@ -725,9 +746,18 @@ int Main::exec() {
 			},
 			{
 				"name": "buttons",
-				"type": "array",
+				"type": "vec",
 				"datatype": "bool",
 				"count": 9,
+				"flags": "per_user"
+			},
+			{
+				"name": "trigger",
+				"type": "vec",
+				"datatype": "int",
+				"count": 1,
+				"min": 0,
+				"max": 255,
 				"flags": "per_user"
 			}
 			],
@@ -755,33 +785,31 @@ int Main::exec() {
 			Cntrl_ID[i].insert(0, ",");
 		}
 		strcpy(controllers, Cntrl_ID[i].c_str());
-		init_msg.insert(216, controllers);		//Insert the controller ID:s int the initial message
+		init_msg.insert(229, controllers);		//Insert the controller ID:s int the initial message
 	}
 	
 	const char *cnt = (std::to_string(c)).c_str();
-	init_msg.insert(203, cnt);					//Insert the number of controllers into the initial message
-	init_msg.insert(94, ip_addr);				//Insert the IP address of the device into the initial message
+	init_msg.insert(216, cnt);					//Insert the number of controllers into the initial message
+	//init_msg.insert(94, ip_addr);				//Insert the IP address of the device into the initial message
 	
 	//std::cout << init_msg << std::endl;		//In case of bug
 	
-	Init_document.Parse(init_msg.c_str());		//Parse the initial message to a JSON document
+	json j_complete = json::parse(init_msg);
 	
-	StringBuffer sb;							//Might be useless but putting the initial message back to a string
-	Writer<StringBuffer> writer2(sb);
-	Init_document.Accept(writer2); 				//Writing parsed document to buffer
+	std::string start_message;
 	
-	//std::cout << s.GetString() << std::endl;	//In case of bug
+	start_message = j_complete.dump();
 	
-	endpoint.send(id, sb.GetString());			//Send the initial message
+	endpoint.send(id, start_message);			//Send the initial message
 	
-	StringBuffer s;
 	
 	///Main loop, polls data and sends it to websocket server///
-	/*
+	
 	while(!start) {
-		std::cout << "waiting for start" << std::endl;		//Wait for server to send start command
+		boost::this_thread::sleep(boost::posix_time::seconds(1));
+		//std::cout << "waiting for start" << std::endl;		//Wait for server to send start command
 	}
-	*/
+	
 	while (retries < MAX_RETRIES ) {	//Close after 7 retries or by pressing 'q'  || ((cvWaitKey(1) & 0xFF) != 27)
 
 		if (use_tracker == yes ) {		//If we use the tracker we need to update the tracker and render the screen
@@ -794,17 +822,29 @@ int Main::exec() {
 	int *Mag_Data;				//Array for the Magnetometer data
 	float *Cam_Data;			//Array for the Cam Tracker data
 	unsigned int *Button_Data;	//Variable for the button value
-	char *array;
+	char *array;				//Array of buttons
+	unsigned char *trigger;		//Analog trigger value
 
 	Acc_Data = new int[3];
 	Gyro_Data = new int[3];
 	Mag_Data = new int[3];
 	Cam_Data = new float[3];
 	Button_Data = new unsigned int[c];
-
+	trigger = new unsigned char[c];
+	
+	time_start = boost::posix_time::microsec_clock::local_time();
+	time_end = boost::posix_time::microsec_clock::local_time();
+	diff = time_end - time_start;
+	
+	while (diff.total_milliseconds() < WAIT_TIME ) {
+		usleep(1);
+		time_end = boost::posix_time::microsec_clock::local_time();
+		diff = time_end - time_start;
+	}
 	for (j=0; j<c; j++) {
 
 		array = new char[9];
+		json json_j;
 		std::string message;
 		std::string bin_button_str;
 
@@ -825,7 +865,11 @@ int Main::exec() {
 		//printf("Controller %d: magnetometer: %5d %5d %5d\n", j, Mag_Data[0], Mag_Data[1], Mag_Data[2]);	//Print magnetometer data
 
 		Button_Data[j] = psmove_get_buttons(controllers[j]);		//Get button data
-		//printf("Controller %d: buttons: %x\n", j, Button_Data);	//Print button data
+		//printf("Controller %d: buttons: %x\n", j, Button_Data[j]);	//Print button data
+		
+		trigger[j] = psmove_get_trigger(controllers[j]);
+		//printf("Controller %d: trigger: %x\n", j, trigger[j]);	//Print button data
+		
 		}
 		
 		//std::cout << Button_Data[0] << std::endl;
@@ -842,51 +886,18 @@ int Main::exec() {
 		array[7] = bin_button_str[2];	//Move
 		array[8] = bin_button_str[1];	//Trigger
 		
-		Writer<StringBuffer> writer(s);
-		
-		writer.StartObject();
-		writer.Key("ID");
-		writer.String(Cntrl_ID2[j].c_str());
-		writer.Key("Accelerometer");
-		writer.StartArray();
-			writer.Double(Acc_Data[0]);
-			writer.Double(Acc_Data[1]);
-			writer.Double(Acc_Data[2]);
-		writer.EndArray();
-		writer.Key("Gyroscope");
-		writer.StartArray();
-			writer.Double(Gyro_Data[0]);
-			writer.Double(Gyro_Data[1]);
-			writer.Double(Gyro_Data[2]);
-		writer.EndArray();
-		writer.Key("Magnetometer");
-		writer.StartArray();
-			writer.Double(Mag_Data[0]);
-			writer.Double(Mag_Data[1]);
-			writer.Double(Mag_Data[2]);
-		writer.EndArray();
+		json_j["type"] = "data";
+		json_j["value"]["device_id"] = "psmove";
+		json_j["value"]["timestamp_ms"] = (time(0)*1000);
+		json_j["value"]["user_1"]["accelerometer"] = {Acc_Data[0], Acc_Data[1], Acc_Data[2]};
+		json_j["value"]["user_1"]["gyroscope"] = {Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]};
+		json_j["value"]["user_1"]["magnetometer"] = {Mag_Data[0], Mag_Data[1], Mag_Data[2]};
 		if (use_tracker == yes) {
-			writer.Key("Tracker");
-			writer.StartArray();
-				writer.Double(Cam_Data2[0]);
-				writer.Double(Cam_Data2[1]);
-				writer.Double(Cam_Data2[2]);
-			writer.EndArray();
+			json_j["value"]["user_1"]["tracker"] = {Cam_Data2[0], Cam_Data2[1], Cam_Data2[2]};
 		}
-		writer.Key("Button");
-		writer.StartArray();
-			writer.Int(array[8] - '0');
-			writer.Int(array[7] - '0');
-			writer.Int(array[6] - '0');
-			writer.Int(array[5] - '0');
-			writer.Int(array[4] - '0');
-			writer.Int(array[3] - '0');
-			writer.Int(array[2] - '0');
-			writer.Int(array[1] - '0');
-			writer.Int(array[0] - '0');
-		writer.EndArray();
-		writer.EndObject();
-		
+		json_j["value"]["user_1"]["buttons"] = {array[8] - '0', array[7] - '0', array[6] - '0', array[5] - '0', array[4] - '0', array[3] - '0'
+		, array[2] - '0', array[1] - '0', array[0] - '0'};
+		json_j["value"]["user_1"]["trigger"] = (trigger[j]);
 		
 		if (retries > 0) {
 			int close_code = websocketpp::close::status::service_restart;	//Reason why we are closing connection
@@ -907,11 +918,14 @@ int Main::exec() {
 			exit(0);
 		}
 		
-		message = s.GetString();
-		
-		///Cleanup before next iteration, avoid memory leaks///
+		//std::cout << "here2" << std::endl;
+		message = json_j.dump();
 		endpoint.send(id, message);
+		//std::cout << message << std::endl;
+		///Cleanup before next iteration, avoid memory leaks///
+		
 		message.clear();
+		json_j.clear();
 		bin_button.reset();
 		bin_button_str.clear();
 		array = {0};
@@ -923,6 +937,7 @@ int Main::exec() {
 	delete[] Mag_Data;
 	delete[] Cam_Data;
 	delete[] Button_Data;
+	delete[] trigger;
   }
 
 	//PSMOVE Cleanup//
@@ -1021,15 +1036,15 @@ int change_port (websocket_endpoint *endpoint, std::string ip) {
 */
 
 int main(int argc, char *argv[]) {
-	printf("> Nr. of controllers found: %d \n", c);
+	std::cout << "> Nr. of controllers found: %d \n", c) << std::endl;
 	
    if (c == 0) {	//If no controller is connected, won't be able to do anything so -> close program
-	   printf("> No controller(s) connected, please connect a controller \n");
+	   std::cout << "> No controller(s) connected, please connect a controller \n") << std::endl;
        return 0;
    }
 	
 	while ((use_tracker != yes) && (use_tracker != no)) {		//Wait until we either get a 'y' or 'n'
-		std::cout << "Use tracker? [y/n] Choosing/changing led color will be disabled if tracking is enabled" << std::endl;
+		std::cout << "> Use tracker? [y/n] Choosing/changing led color will be disabled if tracking is enabled" << std::endl;
 		std::cin >> use_tracker;
 	}
 	
