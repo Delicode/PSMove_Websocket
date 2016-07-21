@@ -691,6 +691,28 @@ int Main::exec() {
 	ip_addr.erase(ip_addr.end()-1, ip_addr.end());			//Remove the newLine/last character from the IP address
 	
 	///Initial JSON message template that will be sent to the Server///
+	/*
+	j_complete["type"] = "device";
+	j_complete["value"]["device_id"] = "psmove";
+	j_complete["value"]["deivce_type"] = "psmove";
+	j_complete["value"]["name"] = "psmove";
+	j_complete["values"] = json::array({"name", "controller_id"});
+	j_complete["values"]["type"] = "array";
+	j_complete["values"]["data_type"] = "string";
+	j_complete["values"]["count"] = c;
+	j_complete["values"]["id"] = Cntrl_ID;
+	j_complete["values"]["id"] = Cntrl_ID;
+	
+	
+	if (use_tracker == yes) {
+		json_j["value"]["user_1"]["tracker"] = {Cam_Data2[0], Cam_Data2[1], Cam_Data2[2]};
+	}
+	json_j["value"]["user_1"]["buttons"] = {array[8] - '0', array[7] - '0', array[6] - '0', array[5] - '0', array[4] - '0', array[3] - '0'
+	, array[2] - '0', array[1] - '0', array[0] - '0'};
+	json_j["value"]["user_1"]["trigger"] = (trigger[j]);
+	
+	
+	*/
 	char Json[] = R"({
 		"type": "device",
 		"value": {
