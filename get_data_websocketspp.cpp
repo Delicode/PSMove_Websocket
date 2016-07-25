@@ -56,9 +56,9 @@
 using json = nlohmann::json;
 
 ///Define///
-#define MAX_RETRIES 6		//Nr of time the program will try to reconnect to the websocket server before closing
+#define MAX_RETRIES 5		//Nr of time the program will try to reconnect to the websocket server before closing
 #define MAX_CONTROLLERS 6	//Can possibly connect more controllers, depending on bluetooth dongle/module
-#define WAIT_TIME 8
+#define WAIT_TIME 8			//Define wait time for limiting the nunber of messages sent per second
 
 
 ///Websocket++ typedef///
@@ -70,9 +70,9 @@ int retries = 0;			//If connection to server is lost we save the number of retri
 bool start = false;			//Value that is checked before we start to send data
 
 ///Time varibles///
-boost::posix_time::ptime time_start;
-boost::posix_time::ptime time_end;
-boost::posix_time::time_duration diff;
+boost::posix_time::ptime time_start;		//When to start couting toeards the wait time
+boost::posix_time::ptime time_end;			//Used to compare/determine how long time has passed
+boost::posix_time::time_duration diff;		//The time difference betweene time_start and time_end
 
 ///Global variables///
 char use_tracker;			//Keep track if we are tracking or not
@@ -169,31 +169,36 @@ public:
 				}
 				if (json_msg.find("function") != json_msg.end()) {
 					auto func_str = json_msg["function"].get<std::string>();
-					if (func_str == "set_led_color") {		//Set the color of the LED:s , does not work if tracking controllers
+					if (func_str == "set_led_color") {				//Set the color of the LED:s , does not work if tracking controllers
 						auto red = json_msg["red"].get<int>();
 						auto green = json_msg["green"].get<int>();
 						auto blue = json_msg["blue"].get<int>();
-						set_led_color(Cntrl_nr, red, green, blue);
+						//set_led_color(Cntrl_nr, red, green, blue);
+						boost::thread t1(&set_led_color, Cntrl_nr, red, green, blue);
 					}
-					else if (func_str == "set_led_pwm") {	//Set the pwm of the LED:s , does not work if tracking controllers
+					else if (func_str == "set_led_pwm") {			//Set the pwm of the LED:s , does not work if tracking controllers
 						auto frequency = json_msg["frequency"].get<unsigned long>();
-						set_led_pwm(controllers[Cntrl_nr], frequency);
+						//set_led_pwm(controllers[Cntrl_nr], frequency);
+						boost::thread t2(&set_led_pwm, controllers[Cntrl_nr], frequency);
 					}
-					else if (func_str == "set_rumble") {	//Set the rumble motor on or change the intensity
+					else if (func_str == "set_rumble") {			//Set the rumble motor on or change the intensity
 						auto intensity = json_msg["intensity"].get<int>();
-						set_rumble(controllers[Cntrl_nr], intensity);
+						//set_rumble(controllers[Cntrl_nr], intensity);
+						boost::thread t3(&set_rumble, controllers[Cntrl_nr], intensity);
 					}
-					else if (func_str == "set_rumble_timed") {
+					else if (func_str == "set_rumble_timed") {		//Set the controller to rumble a cetain duration
 						auto intensity = json_msg["intensity"].get<int>();
 						auto temp_time = json_msg["time"].get<int>();
-						set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
+						//set_rumble_timed(controllers[Cntrl_nr], intensity, temp_time);
+						boost::thread t4(&set_rumble_timed, controllers[Cntrl_nr], intensity, temp_time);
 					}
-					else if (func_str == "set_rumble_pattern") {
+					else if (func_str == "set_rumble_pattern") {	//Custom rumble patterns can be made here
 						int intensity = json_msg["intensity"].get<int>();
 						int temp_pattern = json_msg["pattern"].get<int>();
-						set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
+						//set_rumble_pattern(controllers[Cntrl_nr], intensity, temp_pattern);
+						boost::thread t5(&set_rumble_pattern, controllers[Cntrl_nr], intensity, temp_pattern);
 					}
-					else if (func_str == "disconnect_controller") {
+					else if (func_str == "disconnect_controller") {	//In case we want to disconnect a controller
 						disconnect_controller(controllers[Cntrl_nr]);
 					}
 				}
@@ -262,12 +267,9 @@ public:
     websocket_endpoint () : m_next_id(0) {
         m_endpoint.clear_access_channels(websocketpp::log::alevel::all);
         m_endpoint.clear_error_channels(websocketpp::log::elevel::all);
-		
         m_endpoint.init_asio();
         m_endpoint.start_perpetual();
-
 		m_thread = websocketpp::lib::make_shared<websocketpp::lib::thread>(&client::run, &m_endpoint);
-
         //m_thread.reset(new websocketpp::lib::thread(&client::run, &m_endpoint));
     }
 	
@@ -279,9 +281,7 @@ public:
 				// Only close open connections
 				continue;
 			}
-
 			std::cout << "> Closing connection " << it->second->get_id() << std::endl;
-
 			websocketpp::lib::error_code ec;
 			m_endpoint.close(it->second->get_hdl(), websocketpp::close::status::going_away, "", ec);
 			if (ec) {
@@ -296,12 +296,10 @@ public:
         websocketpp::lib::error_code ec;
 
         client::connection_ptr con = m_endpoint.get_connection(uri, ec);
-
         if (ec) {
             std::cout << "> Connect initialization error: " << ec.message() << std::endl;
             return -1;
         }
-
         int new_id = m_next_id++;
         connection_metadata::ptr metadata_ptr = websocketpp::lib::make_shared<connection_metadata>(new_id, con->get_handle(), uri);
         m_connection_list[new_id] = metadata_ptr;
@@ -486,10 +484,9 @@ Tracker::~Tracker() {
 void Tracker::update() {
 	if (use_tracker == yes) {
 		for (int i=0; i<m_move_count; i++) {
-        Vector3D pos;
-        psmove_fusion_get_position(m_fusion, controllers[i], &(pos.x), &(pos.y), &(pos.z));					//Save the position of the controller for drawing on the screen 
-				
-		psmove_fusion_get_position(m_fusion, controllers[i], &Cam_Data2[0], &Cam_Data2[1], &Cam_Data2[2]);	//Save the postion of the controller for sending to server
+			Vector3D pos;
+			psmove_fusion_get_position(m_fusion, controllers[i], &(pos.x), &(pos.y), &(pos.z));					//Save the position of the controller for drawing on the screen 
+			psmove_fusion_get_position(m_fusion, controllers[i], &Cam_Data2[0], &Cam_Data2[1], &Cam_Data2[2]);	//Save the postion of the controller for sending to server
 		}
 		psmove_tracker_update_image(m_tracker);
 		psmove_tracker_update(m_tracker, NULL);
@@ -686,6 +683,21 @@ int Main::exec() {
 	F_out.close();
 	
 	ip_addr.erase(ip_addr.end()-1, ip_addr.end());				//Remove the newLine/last character from the IP address
+	
+	/*
+	Initial message in a better from, work in progress
+	j_complete["type"] = "device";
+	j_complete["value"]["device_id"] = "psmove";
+	j_complete["value"]["deivce_type"] = "psmove";
+	j_complete["value"]["name"] = "psmove";
+	j_complete["values"] = json::array({"name", "controller_id"});
+	j_complete["values"]["type"] = "array";
+	j_complete["values"]["data_type"] = "string";
+	j_complete["values"]["count"] = c;
+	j_complete["values"]["id"] = Cntrl_ID;
+	j_complete["values"]["id"] = Cntrl_ID;
+	
+	*/
 	
 	///Initial JSON message template that will be sent to the Server///
 	char Json[] = R"({
@@ -968,6 +980,7 @@ void set_led_color (int controller_nr, int red, int green, int blue) {	//Functio
 		b[controller_nr] = blue;
 		psmove_update_leds(controllers[controller_nr]);			//Update/turn on the controller LED
 	}
+	return;
 }
 
 void set_led_pwm(PSMove *move, unsigned long frequency) {		//Function to dim the led
@@ -982,6 +995,7 @@ void set_led_pwm(PSMove *move, unsigned long frequency) {		//Function to dim the
 		}
 		psmove_set_led_pwm_frequency(move , frequency);	//Set the led PWM
 	}
+	return;
 }
 
 void set_rumble (PSMove *move, int intensity) {					//Function to set the controller rumble on
@@ -991,7 +1005,8 @@ void set_rumble (PSMove *move, int intensity) {					//Function to set the contro
 	if (intensity < 0) {										//Minimum or off is 0
 		intensity = 0;
 	}
-	psmove_set_rumble(move , intensity);						//Set the controller rumble 
+	psmove_set_rumble(move , intensity);						//Set the controller rumble
+	return;
 }
 
 void set_rumble_timed (PSMove *move, int intensity, int time) {	//Funtion that turns rumble on for a set time
@@ -1004,6 +1019,7 @@ void set_rumble_timed (PSMove *move, int intensity, int time) {	//Funtion that t
 	psmove_set_rumble(move , intensity);						//Set the controller rumble 
 	boost::this_thread::sleep(boost::posix_time::seconds(time));	//Let controller rumble for time, will be run in different thread
 	psmove_set_rumble(move , 0);								//Turn rumble off
+	return;
 }
 
 void set_rumble_pattern (PSMove *move, int intensity, int pattern) {	//Function that rumbles the motor according to a pattern, ex three rumbles
@@ -1011,6 +1027,7 @@ void set_rumble_pattern (PSMove *move, int intensity, int pattern) {	//Function 
 		psmove_set_rumble(move , intensity);					//Set the controller rumble 
 		boost::this_thread::sleep(boost::posix_time::milliseconds(500));	//Let controller rumble for time
 		psmove_set_rumble(move , 0);							//Turn rumble off
+		return;
 	}
 	if (pattern == 3) {
 		for (int y = 0; y < 3; y++) {
@@ -1026,15 +1043,10 @@ void disconnect_controller (PSMove *move) {						//Funciton to disconnect a cont
 	c = c - 1;
 	psmove_disconnect(move);
 }
-/*	
-int change_port (websocket_endpoint *endpoint, std::string ip) {
-	int id = endpoint->connect(ip);
-	return id;
-}
-*/
+
 
 int main(int argc, char *argv[]) {
-	std::cout << "> Nr. of controllers found:" << c << std::endl;
+	std::cout << "> Nr. of controllers found: " << c << std::endl;
 	
    if (c == 0) {	//If no controller is connected, won't be able to do anything so -> close program
 	   std::cout << "> No controller(s) connected, please connect a controller" << std::endl;
