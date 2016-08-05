@@ -1,29 +1,29 @@
 /*
-* Program to use with the Ps Move controllers and if you have a Ps Eye camera it can also be used with this program
+* Program to use with the PS Move controllers and if you have a PS Eye camera it can also be used with this program
 * Before starting the program, all controllers that you want to use must be connected to the computer
-* If you want to use the Ps Eye camera it must be connected to the computer before choosing to use tracking or not, otherwise the program will throw errors
+* If you want to use the PS Eye camera it must be connected to the computer before choosing to use tracking or not, otherwise the program will throw errors
  
 * The program works in the following way:
  	- Prints out the number of controllers that are connected to the computer
 	- Asks if you want to use the tracking function or not
-		- Type in y for "yes" or n for "no" and then press enter
+	- Type in y for "yes" or n for "no" and then press enter
 	- After this the program will ask for the IP address as well as the port number to the websocket server (In our case the computer that NI MATE is running on)
-		- Type in the IP address and port according to the example on screen and then hit enter
+	- Type in the IP address and port according to the example on screen and then press enter
 	- If you have chosen to use tracking, the camera will initialize and check for the controller colors.
-		- In case the camera is not able to fin the colored Orb and just tracking wild, please remove the following calibration file: /etc/psmoveapi/colormapping.dat (On Linux)
+	- In case the camera is not able to find the colored orbs and just tracking wild, please remove the following calibration file: /etc/psmoveapi/colormapping.dat (On Linux)
 	- Next step the program will create the initial message that will be sent to the websocket server (NI MATE) and send it
-	- After sending the message the program will sleep untill it has recieved the start message from the server (NI MATE)
-	- Once the start message has been recieved, the program will start polling the controllers and sending data to the server at about 120 messages/second (Can be changed, look at the defines)
-	- To close the program, either press the PS button on the move controller (Might have to hold it down for a couple of senconds)
+	- After sending the message the program will sleep until it has received the start message from the server (NI MATE)
+	- Once the start message has been received, the program will start polling the controllers and sending data to the server at about 120 messages/second (Can be changed, look at the defines)
+	- To close the program, either press the PS button on the move controller (Might have to hold it down for a couple of seconds)
 
 * Things to note: 
 	- The program will print a message in case the connection to the server has been lost, and try to reconnect five times and wait five seconds between each try (Both times can be changed, look at the defines)
-	- If the computers bluetooth is connected through USB and the USB throughput is not sufficient, either the camera will crash or the bluetooth, most likely the bluetooth
-	- Using a Raspberry Pi 3 and tracking, the bluetooth will most likely crash after a couple of minutes (LED turns off first and after a while the controller will turn off as well)
+	- If the computers Bluetooth is connected through USB and the USB throughput is not sufficient, either the camera will crash or the Bluetooth, most likely the Bluetooth
+	- Using a Raspberry Pi 3 and tracking, the Bluetooth will most likely crash after a couple of minutes (LED turns off first and after a while the controller will turn off as well)
 	- When using the tracking feature, the color of the LEDs cannot be changed due to how the tracking works. It tracks the colors
 	- Some commands have a bit of a delay, such as sending rumble commands
-	- If you want to change the colors of the controllers here in the code find "///PSMove initial colors///" on line 99 (?)
-	- Some controllers seem to have a hardware bug which does not let the led be set to any value under 127
+	- If you want to change the colors of the controllers here in the code find "///PSMove initial colors///" on line 95 (?)
+	- Some controllers seem to have a hardware bug which does not let the led be set to any value under 127, at least one of our controllers had this bug
 *
 */
 
@@ -33,11 +33,8 @@
 #include <ctime>
 #include <cassert>
 #include <cstdlib>
-//#include <iostream>
-//#include <map>
 #include <cstring>
-//#include <sstream>
-//#include <fstream>
+#include <fstream>
 #include <new>
 #include <math.h>
 #include <stdint.h>
@@ -65,7 +62,7 @@ using json = nlohmann::json;
 
 ///Define///
 #define MAX_RETRIES 5		//Nr of time the program will try to reconnect to the websocket server before closing
-#define MAX_CONTROLLERS 6	//Can possibly connect more controllers, depending on bluetooth dongle/module
+#define MAX_CONTROLLERS 6	//Can possibly connect more controllers, depending on Bluetooth dongle/module
 #define WAIT_TIME 8			//Define wait time for limiting the nunber of messages sent per second
 
 ///Websocket++ typedef///
@@ -101,7 +98,7 @@ unsigned char g[6] = {0, 255, 0, 255, 255, 0};	//Can be changed with the set_led
 unsigned char b[6] = {0, 0, 255, 0, 255, 255};	//Max nr of controllers are 5
 
 ///The PSMove controllers///
-int c = psmove_count_connected();				//Get the number of connected controllers, both usb and bluetooth
+int c = psmove_count_connected();				//Get the number of connected controllers, both usb and Bluetooth
 PSMove **controllers = (PSMove **)calloc(c, sizeof(PSMove *));	//Allocate memory for the controllers
 
 ///Declaring functions///
@@ -118,7 +115,7 @@ void disconnect_controller (PSMove *move);								//Funciton declaration; to dis
 */
 
 class connection_metadata {
-	
+
 public:
     typedef websocketpp::lib::shared_ptr<connection_metadata> ptr;
 
@@ -154,14 +151,14 @@ public:
       << "), close reason: " << con->get_remote_close_reason();
     m_error_reason = s.str();
 	}
-	
+
 	void on_message(websocketpp::connection_hdl, client::message_ptr msg) {
 		//std::cout << msg->get_payload().c_str() << std::endl;						//Use if you need to debug received messages
         if (msg->get_opcode() == websocketpp::frame::opcode::text) {
 			std::string incoming_msg = msg->get_payload(); 							//Convert to string
 			json json_msg = json::parse(incoming_msg);								//Parse to Json
 			int Cntrl_nr = 0;														//Initialise a variable for the controller that will be changed
-			
+
 			if (start) {
 				if (json_msg.find("controller_id") != json_msg.end()) {				//Check Json message if it contains the controller_id
 					std::string cntr_id_nr = json_msg["controller_id"].get<std::string>();	//Save the controller_id
@@ -219,7 +216,7 @@ public:
 						}
 					}
 				}
-					if (type_str == "command") {																				//Check if we recieved a command message
+					if (type_str == "command") {																				//Check if we received a command message
 						if (json_msg.find("value") != json_msg.end()) {															//Check that there is a value in our command message
 							std::string cmd_val = json_msg["value"].get<std::string>();											//Save the command that we have received
 							if (cmd_val == "rumble") {																			//Rumble command is found, start to rumble the controller
@@ -243,7 +240,7 @@ public:
 			}
 			if (json_msg.find("type") != json_msg.end()) {						//The start/pause/stop message key name is "type" with the value "start" / "pause" / "stop"
 				std::string type_cmd = json_msg["type"].get<std::string>();
-				if (type_cmd == "start") { 										//Start message from the server which will be sent to the client when the server is ready to recieve data
+				if (type_cmd == "start") { 										//Start message from the server which will be sent to the client when the server is ready to receive data
 					start = true;												//We set start to true to start polling and sending data
 				}
 				else if (type_cmd == "stop") { 									//Stop message from the server which will be sent to the client when the server wants to stop the client
@@ -299,7 +296,7 @@ std::ostream & operator<< (std::ostream & out, connection_metadata const & data)
 }
 
 class websocket_endpoint {
-	
+
 public:
     websocket_endpoint () : m_next_id(0) {
         m_endpoint.clear_access_channels(websocketpp::log::alevel::all);
@@ -309,7 +306,7 @@ public:
 		m_thread = websocketpp::lib::make_shared<websocketpp::lib::thread>(&client::run, &m_endpoint);
         //m_thread.reset(new websocketpp::lib::thread(&client::run, &m_endpoint));
     }
-	
+
 	~websocket_endpoint() {
 		m_endpoint.stop_perpetual();
 
@@ -347,7 +344,6 @@ public:
             &m_endpoint,
             websocketpp::lib::placeholders::_1
         ));
-		
         con->set_fail_handler(websocketpp::lib::bind(
             &connection_metadata::on_fail,
             metadata_ptr,
@@ -371,19 +367,19 @@ public:
 
         return new_id;
     }
-	
+
 	void send(int id, std::string message) {
 		websocketpp::lib::error_code ec;
-		
+
 		con_list::iterator metadata_it = m_connection_list.find(id);
-		
+
 		if (metadata_it == m_connection_list.end()) {
 			std::cout << "> No connection found with id " << id << std::endl;
 			return;
 		}
 
 		m_endpoint.send(metadata_it->second->get_hdl(), message, websocketpp::frame::opcode::text, ec);
-		
+
 		if (ec) {
 			std::cout << "> Error sending message: " << ec.message() << std::endl;
 			std::cout << "> Trying again after 5 seconds \n";
@@ -393,16 +389,16 @@ public:
 		}
 		retries = 0;
 	}
-	
+
 	void close(int id, websocketpp::close::status::value code, std::string reason) {
         websocketpp::lib::error_code ec;
-        
+
         con_list::iterator metadata_it = m_connection_list.find(id);
         if (metadata_it == m_connection_list.end()) {
             std::cout << "> No connection found with id " << id << std::endl;
             return;
         }
-        
+
         m_endpoint.close(metadata_it->second->get_hdl(), code, reason, ec);
         if (ec) {
             std::cout << "> Error initiating close: " << ec.message() << std::endl;
@@ -417,7 +413,7 @@ public:
 			return metadata_it->second;
 		}
 	}
-	
+
 private:
     typedef std::map<int,connection_metadata::ptr> con_list;
 
@@ -500,7 +496,7 @@ Tracker::Tracker()
 		psmove_tracker_set_mirror(m_tracker, PSMove_True);
 		psmove_tracker_set_exposure(m_tracker, Exposure_HIGH);
 	}
-		
+
     for (int i=0; i<m_move_count; i++) {
 		if (use_tracker == yes) {
 			 while (psmove_tracker_enable(m_tracker, controllers[i]) != Tracker_CALIBRATED); //Track the controllers
@@ -601,7 +597,7 @@ class Renderer {
 Renderer::Renderer(Tracker &tracker)
     : m_window(NULL),
       m_tracker(tracker) {
-	
+
 	if (use_tracker == yes) {
 		SDL_Init(SDL_INIT_VIDEO);
 		if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -704,12 +700,17 @@ void disconnect_controller (PSMove *move) {						//Funciton to disconnect a cont
 }
 
 int main(int argc, char *argv[]) {
-	std::cout << "> Nr. of controllers found: " << c << std::endl;	//Print the nr of controllers that are connected via bluetooth
+	std::cout << "> Nr. of controllers found: " << c << std::endl;	//Print the nr of controllers that are connected via Bluetooth
 	srand(time(NULL));
-	
+	int j;
 	if (c == 0) {												//If no controller is connected, won't be able to do anything so -> close program
 		std::cout << "> No controller(s) connected, please connect a controller" << std::endl;
 		return 0;
+	}
+	///Connect the controllers///
+	for (j=0; j<c; j++) {										//Connecting all the controllers
+		controllers[j] = psmove_connect_by_id(j);				//Connect the controllers
+		assert(controllers[j] != NULL);							//Check that the controller actually connected
 	}
 
 	while ((use_tracker != yes) && (use_tracker != no)) {		//Wait until we either get a 'y' or 'n'
@@ -755,60 +756,40 @@ int main(int argc, char *argv[]) {
 	std::string Cntrl_ID2[c];									//This one will be modified
 
 	///Initialize Controllers///
-   int j;
+
 	for (j=0; j<c; j++) {										//Connecting all the controllers
-		controllers[j] = psmove_connect_by_id(j);				//Connect the controllers
-		assert(controllers[j] != NULL);							//Check that the controller actually connected
 		
 		if (psmove_connection_type(controllers[j]) == Conn_USB){//If controller is connected with USB it cannot be polled
 			printf("> Controller %d is connected with USB, cannot poll data\n", j);
 		}
 		psmove_set_rate_limiting(controllers[j], PSMove_True);	//Rate limit the controller, should be on by default but will enable just in case
-		Cntrl_ID[j] = psmove_get_serial(controllers[j]);		//Get the controllers bluetooth mac address
+		Cntrl_ID[j] = psmove_get_serial(controllers[j]);		//Get the controllers Bluetooth mac address
 		Cntrl_ID2[j] = psmove_get_serial(controllers[j]);		//Get another copy of the addresses, this array will be modified for the initial JSON message
 		psmove_set_leds(controllers[j], r[j], g[j], b[j]);		//Assign color to the controller LED
 		psmove_update_leds(controllers[j]);						//Update/turn on the controller LED
 	}
-	
+
 	if (controllers == NULL) {									//In case no controller successfully connected
         printf("> Could not connect to default Move controller.\n"
                "> Please connect one via Bluetooth.\n");
         exit(0);
     }
-	
+
 	///Initial contact with websocket server (NI MATE)///
-	/*
-	system("bash save_IP.sh");									//Run a bash file to get the current devices IP address, might be changed for something else
-	
-	std::string ip_addr;										//IP address of the local computer / client
+
+	system("bash get_mac_addr.sh");								//Run a bash file to get the current devices MAC address (eth0 address)
+
+	std::string mac_addr;										//IP address of the local computer / client
 	std::ifstream F_out;
-	F_out.open("IPaddress.txt");								//Open the file that contains the IP address
-	std::getline(F_out, ip_addr);								//Get the IP address
+	F_out.open("MAC_address.txt");								//Open the file that contains the IP address
+	std::getline(F_out, mac_addr);								//Get the IP address
 	F_out.close();
-	
-	ip_addr.erase(ip_addr.end()-1, ip_addr.end());				//Remove the newLine/last character from the IP address
-	*/
-	
-	/*
-	Initial message in a better from, work in progress
-	j_complete["type"] = "device";
-	j_complete["value"]["device_id"] = ip_addr;
-	j_complete["value"]["deivce_type"] = "psmove";
-	j_complete["value"]["name"] = "psmove";
-	j_complete["values"] = json::array({"name", "controller_id"});
-	j_complete["values"]["type"] = "array";
-	j_complete["values"]["data_type"] = "string";
-	j_complete["values"]["count"] = c;
-	j_complete["values"]["id"] = Cntrl_ID;
-	j_complete["values"]["id"] = Cntrl_ID;
-	
-	*/
-	
+
 	///Initial JSON message template that will be sent to the Server///
 	char Json[] = R"({
 		"type": "device",
 		"value": {
-			"device_id": "psmove",
+			"device_id": "",
 			"device_type": "psmove",
 			"name": "psmove",
 			"values": [ {
@@ -964,10 +945,14 @@ int main(int argc, char *argv[]) {
 			]
 		}	
 	})";
-	
+
 	std::string init_msg(Json);					//Create string from the above char message
-	
-	///To add the controllers bluetooth address to the initial message we need to modify the strings///
+
+	if (use_tracker == no) {					//Remove tracker from initial message
+		init_msg.erase (780,173);
+	}
+
+	///To add the controllers Bluetooth address to the initial message we need to modify the strings///
 	for (int i = 0; i< c; i++) {
 		char controllers[1024];
 		if (i == 0) {
@@ -977,23 +962,20 @@ int main(int argc, char *argv[]) {
 		else {
 			Cntrl_ID[i].insert(0,"\"");
 			Cntrl_ID[i].append("\"");
-			Cntrl_ID[i].insert(0, ",");
+			Cntrl_ID[i].append(",");
 		}
 		strcpy(controllers, Cntrl_ID[i].c_str());
-		init_msg.insert(229, controllers);		//Insert the controller ID:s int the initial message
+		init_msg.insert(223, controllers);		//Insert the controller ID:s int the initial message
 	}
-	
+
 	const char *cnt = (std::to_string(c)).c_str();
-	init_msg.insert(216, cnt);					//Insert the number of controllers into the initial message
-	//init_msg.insert(94, ip_addr);				//Insert the IP address of the device into the initial message
-	
-	if (use_tracker == no) {					//Remove tracker from initial message
-		init_msg.erase (785,173);
-	}
-	
-	//std::cout << init_msg << std::endl;		//In case of bug
-	
+	init_msg.insert(210, cnt);					//Insert the number of controllers into the initial message
+	init_msg.insert(52, mac_addr);				//Insert the IP address of the device into the initial message
+
+	std::cout << init_msg << std::endl;		//In case of bug
+
 	json j_complete = json::parse(init_msg);	//Parse our message to Json
+
 	std::string start_message;
 	start_message = j_complete.dump();			//Dump the Json back to string so that it can be sent to the server
 
@@ -1064,10 +1046,10 @@ int main(int argc, char *argv[]) {
 				//printf("Controller %d: trigger: %x\n", j, trigger[j]);
 				//std::cout << Button_Data[0] << std::endl;
 			}
-			
+
 			std::bitset<22> bin_button = (Button_Data[j]);
 			bin_button_str = bin_button.to_string();
-		
+
 			array[0] = bin_button_str[17];	//Triangle
 			array[1] = bin_button_str[16];	//Circle
 			array[2] = bin_button_str[15];	//Cross
@@ -1079,7 +1061,7 @@ int main(int argc, char *argv[]) {
 			array[8] = bin_button_str[1];	//Trigger
 
 			json_j["type"] = "data";
-			json_j["value"]["device_id"] = "psmove";
+			json_j["value"]["device_id"] = mac_addr;
 			json_j["value"]["timestamp_ms"] = (time(0)*1000);
 			json_j["value"]["user_1"]["accelerometer"] = {Acc_Data[0], Acc_Data[1], Acc_Data[2]};
 			json_j["value"]["user_1"]["gyroscope"] = {Gyro_Data[0], Gyro_Data[1], Gyro_Data[2]};
@@ -1090,7 +1072,7 @@ int main(int argc, char *argv[]) {
 			json_j["value"]["user_1"]["buttons"] = {array[8] - '0', array[7] - '0', array[6] - '0', array[5] - '0', array[4] - '0', array[3] - '0'
 			, array[2] - '0', array[1] - '0', array[0] - '0'};
 			json_j["value"]["user_1"]["trigger"] = (trigger[j]);
-			
+
 			if (retries > 0) {
 				int close_code = websocketpp::close::status::service_restart;	//Reason why we are closing connection
 				std::string reason = "Trying to re-connect";
@@ -1106,7 +1088,7 @@ int main(int argc, char *argv[]) {
 			message = json_j.dump();											//Dump the Json message to a string so it can be sent
 			endpoint.send(id, message);											//Send the message / data to the server
 			//std::cout << message << std::endl;								//In case we need to debug the message that is sent
-			
+
 			///Cleanup before next iteration, avoid memory leaks///
 			message.clear();
 			json_j.clear();
@@ -1122,7 +1104,7 @@ int main(int argc, char *argv[]) {
 		delete[] Cam_Data;
 		delete[] Button_Data;
 		delete[] trigger;
-		
+
 		if (paused) {
 			boost::this_thread::sleep(boost::posix_time::milliseconds(500)); 		//Wait 500ms then check if we should unpause
 		}
