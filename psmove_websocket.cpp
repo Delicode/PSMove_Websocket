@@ -24,7 +24,7 @@
 	- Some commands have a bit of a delay, such as sending rumble commands
 	- If you want to change the colors of the controllers here in the code find "///PSMove initial colors///" on line 95 (?)
 	- Some controllers seem to have a hardware bug which does not let the led be set to any value under 127, at least one of our controllers had this bug
-*
+	- To get this to work on windows and OS X, one needs to change how the mac address of the computer is found / got on line 781, this step can also just be replaced with your own Device_ID
 */
 
 ///General Header files///
@@ -205,13 +205,13 @@ public:
 								frequency_param = json_tmp["frequency"].get<unsigned long>();	//Get the frequency of the pwm and set our frequency parameter
 							}
 							if (json_tmp.find("intensity") != json_tmp.end()) {
-								intensity_param = json_tmp["intensity"].get<int>();				//Get the intensity of the ruble and set our rumble parameter
+								intensity_param = json_tmp["intensity"].get<int>();				//Get the intensity of the rumble and set our rumble parameter
 							}
 							if (json_tmp.find("pattern") != json_tmp.end()) {
-								pattern_param = json_tmp["pattern"].get<int>();					//Get the intensity of the ruble and set our pattern parameter
+								pattern_param = json_tmp["pattern"].get<int>();					//Get the pattern of the rumble and set our pattern parameter
 							}
 							if (json_tmp.find("duration") != json_tmp.end()) {
-								duration_param = json_tmp["duration"].get<int>();				//Get the duration of the ruble and set our duration parameter
+								duration_param = json_tmp["duration"].get<int>();				//Get the duration of the rumble and set our duration parameter
 							}
 						}
 					}
@@ -242,12 +242,13 @@ public:
 				std::string type_cmd = json_msg["type"].get<std::string>();
 				if (type_cmd == "start") { 										//Start message from the server which will be sent to the client when the server is ready to receive data
 					start = true;												//We set start to true to start polling and sending data
+					paused = false;
 				}
-				else if (type_cmd == "stop") { 									//Stop message from the server which will be sent to the client when the server wants to stop the client
+				else if (type_cmd == "quit") { 									//Stop message from the server which will be sent to the client when the server wants to stop the client
 					stop = true;												//We set stop to true to stop the program
 				}
-				else if (type_cmd == "pause") { 								//Stop message from the server which will be sent to the client when the server wants to stop the client
-					paused = !paused;												//Flip the value of pause to either pause or unpause our program
+				else if (type_cmd == "stop") { 									//Stop message from the server which will be sent to the client when the server wants to pause the client sending data
+					paused = !paused;											//Flip the value of pause to either pause or unpause our program
 				}
 			}
 			incoming_msg.clear();												//Clear the strings just in case
@@ -776,7 +777,7 @@ int main(int argc, char *argv[]) {
     }
 
 	///Initial contact with websocket server (NI MATE)///
-
+	#ifdef __unix__
 	system("bash get_mac_addr.sh");								//Run a bash file to get the current devices MAC address (eth0 address)
 
 	std::string mac_addr;										//IP address of the local computer / client
@@ -784,6 +785,11 @@ int main(int argc, char *argv[]) {
 	F_out.open("MAC_address.txt");								//Open the file that contains the IP address
 	std::getline(F_out, mac_addr);								//Get the IP address
 	F_out.close();
+	
+	#elif defined(_WIN32) || defined(WIN32)
+	mac_addr = "Custom_ID;"									//Any device_id can be assigned if you want
+	#endif
+	
 
 	///Initial JSON message template that will be sent to the Server///
 	char Json[] = R"({
@@ -1073,12 +1079,13 @@ int main(int argc, char *argv[]) {
 			, array[2] - '0', array[1] - '0', array[0] - '0'};
 			json_j["value"]["user_1"]["trigger"] = (trigger[j]);
 
-			if (retries > 0) {
+			while ((retries > 0) && (retries < MAX_RETRIES)) {
 				int close_code = websocketpp::close::status::service_restart;	//Reason why we are closing connection
 				std::string reason = "Trying to re-connect";
 				endpoint.close(id, close_code, reason);							//This will fail if server was closed, might be useless
 				id = endpoint.connect(ip_address);								//Try to reconnect to the server, id will be old id + 1
 				boost::this_thread::sleep(boost::posix_time::seconds(2)); 		//Have to wait a couple of seconds to reconnect
+				endpoint.send(id, start_message);
 			}
 			if ((array[6] - '0') == 1) {										//When PS button is pressed we stop the program by stopping the while loop
 				std::cout << "PS button pressed, closing program" << std::endl;
